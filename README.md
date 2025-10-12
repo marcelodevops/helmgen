@@ -2,13 +2,25 @@
 Auto-generate Helm charts from Docker Compose files.
 
 **HelmGen** is a Python CLI tool that automatically converts your `docker-compose.yml` into a fully structured Helm chart — including Deployments, Services, PVCs, Ingress, and Secrets (internal or ExternalSecrets).
-#### This project:
-- Reads a Docker Compose YAML file
-- Auto-detects databases, secrets, volumes, ingress, etc.
-- Generates Helm chart structure
-- Supports internal or external secrets
-- Supports SecretStore reuse and cluster/namespace scope
-- Writes all templates (deployment, service, pvc, ingress, secrets, externalsecret, secretstore)
+#### Features:
+- Convert **Docker Compose** files directly into **Helm charts**
+- Auto-detect **databases** → generate StatefulSets + PVCs
+- Auto-generate **Kubernetes Secrets** or **ExternalSecrets**
+- Support for **Vault**, **AWS Secrets Manager**, or **ExternalSecrets Operator**
+- Generate **SecretStore** or **ClusterSecretStore** automatically
+- Auto-generate **Ingress** resources for web services
+- Replace hardcoded secrets with safe placeholders in `values.yaml`
+- Detect whether secrets should be env vars or mounted files
+- CLI support for flexible options and overrides
+
+### Installation
+
+### From source (recommended for development)
+```bash
+git clone https://github.com/yourusername/helmgen.git
+cd helmgen
+pip install -e .
+```
 #### if you want to run it as a python script
 
 ```bash
