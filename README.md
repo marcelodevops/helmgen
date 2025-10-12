@@ -19,9 +19,13 @@ Auto-generate Helm charts from Docker Compose files.
 ```bash
 git clone https://github.com/yourusername/helmgen.git
 cd helmgen
-pip install -e .
+pip install -e . 
 ```
-#### if you want to run it as a python script
+- Then you can run it as a command:
+```bash
+helmgen --help
+```
+#### if you want to run it as a python script (not recommended)
 
 ```bash
 python3 generator.py docker-compose.yml \
