@@ -83,3 +83,17 @@ helm install myapp ./charts/myapp
 | **jinja2**      | Template rendering for Helm YAML files (used when writing `templates/`).                              |
 | **click**       | Optional CLI framework (if you upgrade from `argparse` later for nicer commands).                     |
 | **rich**        | Optional but recommended — adds colored console output, status spinners, and better error formatting. |
+
+
+### Install dependencies
+```bash
+pip install -r requirements.txt
+```
+
+### Update to run it as a CLI tool
+- Usage
+
+```bash
+helmgen docker-compose.yml --output ./charts/myapp
+
+```
