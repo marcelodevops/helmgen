@@ -73,3 +73,13 @@ python3 generator.py docker-compose.yml --output ./charts/myapp --secret-provide
 helm install myapp ./charts/myapp
 
 ```
+
+### Dependencies
+
+| Package         | Purpose                                                                                               |
+| --------------- | ----------------------------------------------------------------------------------------------------- |
+| **PyYAML**      | Primary YAML parser for reading `docker-compose.yml`.                                                 |
+| **ruamel.yaml** | More advanced YAML manipulation (preserves comments, ordering).                                       |
+| **jinja2**      | Template rendering for Helm YAML files (used when writing `templates/`).                              |
+| **click**       | Optional CLI framework (if you upgrade from `argparse` later for nicer commands).                     |
+| **rich**        | Optional but recommended — adds colored console output, status spinners, and better error formatting. |
