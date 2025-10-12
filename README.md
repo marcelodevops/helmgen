@@ -107,3 +107,22 @@ helmgen docker-compose.yml --output ./charts/myapp
 - Everything else is metadata (version, author, URLs, etc.)
 
 - Dependencies match the ones from your requirements.txt
+
+
+### Project layout
+
+´´´bash
+helmgen/
+├── generator.py
+├── pyproject.toml
+├── README.md
+├── requirements.txt
+└── helm_templates/
+    ├── deployment.yaml
+    ├── service.yaml
+    ├── pvc.yaml
+    ├── ingress.yaml
+    ├── secrets.yaml
+    ├── externalsecret.yaml
+    └── secretstore.yaml
+```
