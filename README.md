@@ -97,3 +97,13 @@ pip install -r requirements.txt
 helmgen docker-compose.yml --output ./charts/myapp
 
 ```
+
+### How it works
+
+- project.scripts exposes a command called helmgen
+
+- That command runs the main() function inside your generator.py
+
+- Everything else is metadata (version, author, URLs, etc.)
+
+- Dependencies match the ones from your requirements.txt
