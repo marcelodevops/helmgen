@@ -1,0 +1,47 @@
+{{- range $name, $svc := .Values.services }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $.Release.Name }}-{{ $name }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: {{ $.Release.Name }}-{{ $name }}
+  template:
+    metadata:
+      labels:
+        app: {{ $.Release.Name }}-{{ $name }}
+    spec:
+      containers:
+        - name: {{ $name }}
+          image: {{ $svc.image }}
+          env:
+            {{- range $k, $v := $svc.env }}
+            - name: {{ $k }}
+              value: {{ $v | quote }}
+            {{- end }}
+            {{- range $k, $v := $svc.secrets }}
+            - name: {{ $k }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $.Release.Name }}-{{ $name }}-secret
+                  key: {{ $k }}
+            {{- end }}
+          ports:
+            {{- range $svc.ports }}
+            - containerPort: {{ .containerPort }}
+            {{- end }}
+          volumeMounts:
+            {{- if $svc.storage }}
+            - name: data
+              mountPath: /data
+            {{- end }}
+      volumes:
+        {{- if $svc.storage }}
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ $.Release.Name }}-{{ $name }}-pvc
+        {{- end }}
+---
+{{- end }}
