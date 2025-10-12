@@ -60,3 +60,16 @@ Files and templates directory:
     - Databases as StatefulSets (via PVC)
     - Ingress auto-detection
     - ClusterSecretStore / SecretStore support
+
+### Run this version
+- Generate files and templates from compose file:
+
+```bash
+python3 generator.py docker-compose.yml --output ./charts/myapp --secret-provider externalsecret
+```
+
+- Then install chart:
+```bash
+helm install myapp ./charts/myapp
+
+```
