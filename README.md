@@ -101,17 +101,15 @@ helmgen docker-compose.yml --output ./charts/myapp
 ### How it works
 
 - project.scripts exposes a command called helmgen
-
 - That command runs the main() function inside your generator.py
-
 - Everything else is metadata (version, author, URLs, etc.)
-
 - Dependencies match the ones from your requirements.txt
 
 
 ### Project layout
 
-´´´bash
+```bash
+
 helmgen/
 ├── generator.py
 ├── pyproject.toml
@@ -126,3 +124,15 @@ helmgen/
     ├── externalsecret.yaml
     └── secretstore.yaml
 ```
+### Install locally for development
+- From the folder containing pyproject.toml:
+```bash
+pip install -e .
+```
+### Then you can run it directly:
+```bash
+helmgen docker-compose.yml --output ./charts/myapp
+```
+
+
+### Build a distributable package
