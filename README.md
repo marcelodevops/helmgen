@@ -48,3 +48,15 @@ helm_templates/
 └── secretstore.yaml
 
 ```
+
+### Summary
+
+Files and templates directory:
+- generator.py → generates chart structure and populates values.yaml.
+- helm_templates/ → reusable Jinja-style templates compatible with Helm.
+- Seamless handling of:
+
+    - Secrets and ExternalSecrets
+    - Databases as StatefulSets (via PVC)
+    - Ingress auto-detection
+    - ClusterSecretStore / SecretStore support
