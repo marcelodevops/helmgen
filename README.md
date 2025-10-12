@@ -2,7 +2,7 @@
 Auto-generate Helm charts from Docker Compose files.
 
 **HelmGen** is a Python CLI tool that automatically converts your `docker-compose.yml` into a fully structured Helm chart — including Deployments, Services, PVCs, Ingress, and Secrets (internal or ExternalSecrets).
-#### Features:
+##### Features:
 - Convert **Docker Compose** files directly into **Helm charts**
 - Auto-detect **databases** → generate StatefulSets + PVCs
 - Auto-generate **Kubernetes Secrets** or **ExternalSecrets**
@@ -15,7 +15,7 @@ Auto-generate Helm charts from Docker Compose files.
 
 ### Installation
 
-### From source (recommended for development)
+##### From source (recommended for development)
 ```bash
 git clone https://github.com/yourusername/helmgen.git
 cd helmgen
@@ -25,7 +25,7 @@ pip install -e .
 ```bash
 helmgen --help
 ```
-#### if you want to run it as a python script (not recommended)
+##### if you want to run it as a python script (not recommended)
 
 ```bash
 python3 generator.py docker-compose.yml \
@@ -35,7 +35,7 @@ python3 generator.py docker-compose.yml \
   --reuse-store global-vault-store
   ```
 
-#### This will create a complete Helm chart with:
+##### This will create a complete Helm chart with:
 
 ```bash
 charts/myapp/
@@ -52,7 +52,7 @@ charts/myapp/
 
 ```
 
-#### Templates 
+##### Templates 
 
 ```bash
 helm_templates/
@@ -66,7 +66,7 @@ helm_templates/
 
 ```
 
-#### Summary
+##### Summary
 
 Files and templates directory:
 - generator.py → generates chart structure and populates values.yaml.
@@ -78,7 +78,7 @@ Files and templates directory:
     - Ingress auto-detection
     - ClusterSecretStore / SecretStore support
 
-#### Run this version
+##### Run this version
 - Generate files and templates from compose file:
 
 ```bash
@@ -91,7 +91,7 @@ helm install myapp ./charts/myapp
 
 ```
 
-#### Dependencies
+##### Dependencies
 
 | Package         | Purpose                                                                                               |
 | --------------- | ----------------------------------------------------------------------------------------------------- |
@@ -102,12 +102,12 @@ helm install myapp ./charts/myapp
 | **rich**        | Optional but recommended — adds colored console output, status spinners, and better error formatting. |
 
 
-#### Install dependencies
+##### Install dependencies
 ```bash
 pip install -r requirements.txt
 ```
 
-#### Update to run it as a CLI tool
+##### Update to run it as a CLI tool
 - Usage
 
 ```bash
@@ -115,7 +115,7 @@ helmgen docker-compose.yml --output ./charts/myapp
 
 ```
 
-#### How it works
+##### How it works
 
 - project.scripts exposes a command called helmgen
 - That command runs the main() function inside your generator.py
@@ -123,7 +123,7 @@ helmgen docker-compose.yml --output ./charts/myapp
 - Dependencies match the ones from your requirements.txt
 
 
-#### Project layout
+##### Project layout
 
 ```bash
 
@@ -141,18 +141,18 @@ helmgen/
     ├── externalsecret.yaml
     └── secretstore.yaml
 ```
-#### Install locally for development
+##### Install locally for development
 - From the folder containing pyproject.toml:
 ```bash
 pip install -e .
 ```
-#### Then you can run it directly:
+##### Then you can run it directly:
 ```bash
 helmgen docker-compose.yml --output ./charts/myapp
 ```
 
 
-#### Build a distributable package
+##### Build a distributable package
 - to share it or publish it to PyPI (optional):
 ```bash
 python -m build
