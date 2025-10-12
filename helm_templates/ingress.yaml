@@ -1,0 +1,37 @@
+{{- range $name, $svc := .Values.services }}
+{{- if $svc.ingress }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ $.Release.Name }}-{{ $name }}-ingress
+  annotations:
+    {{- range $key, $val := $svc.ingress.annotations }}
+    {{ $key }}: {{ $val | quote }}
+    {{- end }}
+spec:
+  rules:
+    {{- range $rule := $svc.ingress.rules }}
+    - host: {{ $rule.host }}
+      http:
+        paths:
+          - path: {{ $rule.path | default "/" }}
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ $.Release.Name }}-{{ $name }}
+                port:
+                  number: {{ $rule.port | default 80 }}
+    {{- end }}
+  {{- if $svc.ingress.tls }}
+  tls:
+    {{- range $tls := $svc.ingress.tls }}
+    - hosts:
+        {{- range $tls.hosts }}
+        - {{ . }}
+        {{- end }}
+      secretName: {{ $tls.secretName }}
+    {{- end }}
+  {{- end }}
+---
+{{- end }}
+{{- end }}
