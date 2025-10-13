@@ -25,6 +25,23 @@ pip install -e .
 ```bash
 helmgen --help
 ```
+
+### Usage
+```bash
+helmgen docker-compose.yml [options]
+```
+### Example
+```bash
+helmgen docker-compose.yml \
+  --output ./charts/myapp \
+  --secret-provider externalsecret \
+  --store-scope cluster \
+  --reuse-store global-vault-store
+
+```
+
+
+
 ##### if you want to run it as a python script (not recommended)
 
 ```bash
