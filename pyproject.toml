@@ -26,4 +26,4 @@ repository = "https://github.com/marcelodevops/helmgen"
 issues = "https://github.com/marcelodevops/helmgen/issues"
 
 [project.scripts]
-helmgen = "generator:main"
+helmgen = "helmgen.generator:main"

@@ -105,7 +105,13 @@ volumes:
     - Ingress if ports are exposed
 
 
-- In this example the sensitive data is hard coded in the compose file with is a very bad practice but it's being used only for purpose of the example
+- In this example the sensitive data is hard coded in the compose file with is a very bad practice but it's being used only for purpose of the example demonstration
+
+
+##### Secret management
+- There are 2 options
+    1. Internal (default helm secret)
+    2. External
 
 ##### if you want to run it as a python script (not recommended)
 
