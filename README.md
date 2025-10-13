@@ -68,6 +68,44 @@ helm install myapp ./charts/myapp
 | `--store-scope`         | `namespace` or `cluster` SecretStore            | `namespace`         |
 | `--reuse-store`         | Name of existing SecretStore/ClusterSecretStore | *None*              |
 
+### Example
+
+```yaml
+version: "3.8"
+services:
+  web:
+    image: nginx:alpine
+    ports:
+      - "8080:80"
+    environment:
+      APP_ENV: production
+      SECRET_KEY: supersecret
+
+  db:
+    image: postgres:14
+    environment:
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: pass123
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+
+volumes:
+  db-data:
+
+```
+
+- This will generate a Helm Chart with
+
+    - StatefulSet for Postgres
+    - Deployment for web
+    - Secrets/ExternalSecrets for passwords
+    - PVC for db-data
+    - Ingress if ports are exposed
+
+
+- In this example the sensitive data is hard coded in the compose file with is a very bad practice but it's being used only for purpose of the example
 
 ##### if you want to run it as a python script (not recommended)
 
