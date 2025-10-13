@@ -37,6 +37,22 @@ helmgen docker-compose.yml \
   --secret-provider externalsecret \
   --store-scope cluster \
   --reuse-store global-vault-store
+```
+
+
+- This generates
+```bash
+charts/myapp/
+├── Chart.yaml
+├── values.yaml
+└── templates/
+    ├── deployment.yaml
+    ├── service.yaml
+    ├── pvc.yaml
+    ├── ingress.yaml
+    ├── secrets.yaml
+    ├── externalsecret.yaml
+    └── secretstore.yaml
 
 ```
 
