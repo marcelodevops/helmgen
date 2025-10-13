@@ -55,7 +55,18 @@ charts/myapp/
     └── secretstore.yaml
 
 ```
+- Then you can deploy
+```bash
+helm install myapp ./charts/myapp
+```
+### CLI options
 
+| Option                  | Description                                     | Default             |
+| ----------------------- | ----------------------------------------------- | ------------------- |
+| `--output, -o`          | Directory for generated Helm chart              | `./generated-chart` |
+| `--secret-provider, -s` | `internal` (Helm Secret) or `externalsecret`    | `internal`          |
+| `--store-scope`         | `namespace` or `cluster` SecretStore            | `namespace`         |
+| `--reuse-store`         | Name of existing SecretStore/ClusterSecretStore | *None*              |
 
 
 ##### if you want to run it as a python script (not recommended)
