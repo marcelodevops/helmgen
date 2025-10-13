@@ -13,3 +13,6 @@ License: MIT
 __version__ = "0.1.0"
 
 from .generator import main
+
+if __name__ == "__main__":
+    main()
