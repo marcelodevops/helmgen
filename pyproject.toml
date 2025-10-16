@@ -27,3 +27,6 @@ issues = "https://github.com/marcelodevops/helmgen/issues"
 
 [project.scripts]
 helmgen = "helmgen.generator:main"
+
+[tool.setuptools]
+include-package-data = true

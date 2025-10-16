@@ -5,7 +5,26 @@ import sys
 import yaml
 import argparse
 from pathlib import Path
+import importlib.resources as pkg_resources
+import shutil
 from shutil import copyfile
+
+# -------------------------------------------------------------------
+# Locate Helm templates robustly (works in dev mode and installed pkg)
+# -------------------------------------------------------------------
+def get_template_dir() -> Path:
+    """
+    Locate the helm_templates directory whether running from source
+    or from an installed package.
+    """
+    # Try to resolve from package resources (works after install)
+    try:
+        return Path(pkg_resources.files("helmgen") / "helm_templates")
+    except Exception:
+        # Fallback for local dev execution
+        return Path(__file__).parent / "helm_templates"
+
+TEMPLATE_DIR = get_template_dir()
 
 # -------------------------------
 # Utility helpers
@@ -196,7 +215,7 @@ def generate_helm_chart(compose_path, output_dir, secret_provider, store_scope, 
         yaml.safe_dump(values, f, sort_keys=False)
 
     # Copy templates
-    local_tpl_dir = Path("helm_templates")
+    local_tpl_dir = Path(TEMPLATE_DIR)
     for tpl in BASE_HELM_TEMPLATES:
         src = local_tpl_dir / tpl
         dest = templates_dir / tpl

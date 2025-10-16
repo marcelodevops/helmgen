@@ -1,6 +1,0 @@
-services:
-  app:
-    image: nginx:latest
-    env: {}
-    secrets: {}
-secretProvider: internal
