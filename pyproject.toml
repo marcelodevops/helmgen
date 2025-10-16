@@ -30,3 +30,11 @@ helmgen = "helmgen.generator:main"
 
 [tool.setuptools]
 include-package-data = true
+
+[tool.semantic_release]
+version_variable = "helmgen/__init__.py:__version__"
+branch = "main"
+upload_to_pypi = true
+build_command = "python -m build"
+commit_author = "semantic-release <actions@github.com>"
+changelog_file = "CHANGELOG.md"

@@ -10,7 +10,7 @@ Author: Marcelo Garcia
 License: MIT
 """
 
-__version__ = "0.1.0"
+__version__ = "0.1.2"
 
 from .generator import main
 
