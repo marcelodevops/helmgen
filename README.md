@@ -13,7 +13,7 @@ Auto-generate Helm charts from Docker Compose files.
 - Auto-detect **Ingress** from exposed web ports (80/443/8080) and Traefik-style `Host(...)` labels
 - Replace hardcoded secrets with safe placeholders in `values.yaml`
 - Sensible storage size defaults per database type
-- Maps compose `replicas`, `command`/`args`, and `deploy.resources` into the chart
+- Maps compose `replicas`, `command`/`args`, `deploy.resources`, and `healthcheck` (→ liveness/readiness probes) into the chart
 - Default CPU/memory `resources` on all containers, overridable per service in `values.yaml`
 - Optional HTTP liveness/readiness probes via `probePath`/`probePort` in `values.yaml`
 - Standard `app.kubernetes.io/*` labels on every resource (via `_helpers.tpl`)
@@ -44,6 +44,7 @@ helmgen docker-compose.yml [options]
 | `--secret-provider, -s` | `internal` (Helm Secret) or `externalsecret`    | `internal`          |
 | `--store-scope`         | `namespace` or `cluster` SecretStore            | `namespace`         |
 | `--reuse-store`         | Name of existing SecretStore/ClusterSecretStore | *None*              |
+| `--ingress-class`       | `ingressClassName` for generated Ingress        | `nginx`             |
 
 ### Example
 
