@@ -1,1 +1,1 @@
-recursive-include helmgen/helm_templates *.yaml
+recursive-include helmgen/helm_templates *
