@@ -1,9 +1,12 @@
 {{- range $name, $svc := .Values.services }}
 {{- if $svc.storage }}
+{{- $labels := dict "root" $ "name" $name }}
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: {{ $.Release.Name }}-{{ $name }}-pvc
+  labels:
+    {{- include "helmgen.labels" $labels | nindent 4 }}
 spec:
   accessModes:
     - ReadWriteOnce

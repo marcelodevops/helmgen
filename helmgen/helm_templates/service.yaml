@@ -1,8 +1,12 @@
 {{- range $name, $svc := .Values.services }}
+{{- if $svc.ports }}
+{{- $labels := dict "root" $ "name" $name }}
 apiVersion: v1
 kind: Service
 metadata:
   name: {{ $.Release.Name }}-{{ $name }}
+  labels:
+    {{- include "helmgen.labels" $labels | nindent 4 }}
 spec:
   selector:
     app: {{ $.Release.Name }}-{{ $name }}
@@ -15,4 +19,5 @@ spec:
     {{- end }}
   type: {{ $svc.serviceType | default "ClusterIP" }}
 ---
+{{- end }}
 {{- end }}

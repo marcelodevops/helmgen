@@ -1,9 +1,12 @@
 {{- range $name, $svc := .Values.services }}
 {{- if $svc.ingress }}
+{{- $labels := dict "root" $ "name" $name }}
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: {{ $.Release.Name }}-{{ $name }}-ingress
+  labels:
+    {{- include "helmgen.labels" $labels | nindent 4 }}
   annotations:
     {{- range $key, $val := $svc.ingress.annotations }}
     {{ $key }}: {{ $val | quote }}
@@ -11,7 +14,7 @@ metadata:
 spec:
   rules:
     {{- range $rule := $svc.ingress.rules }}
-    - host: {{ $rule.host }}
+    - host: {{ $rule.host | quote }}
       http:
         paths:
           - path: {{ $rule.path | default "/" }}
