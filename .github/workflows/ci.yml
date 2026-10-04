@@ -9,12 +9,30 @@ on:
     branches: [ main, master ]
 
 jobs:
+  lint:
+    name: 🧹 Lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install ruff
+        run: pip install ruff
+
+      - name: Run ruff
+        run: ruff check .
+
   test:
     name: 🧪 Test and Coverage
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: ["3.10", "3.11", "3.12"]
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
 
     steps:
       - name: Checkout code
@@ -31,9 +49,23 @@ jobs:
           pip install -e .
           pip install pytest pytest-cov
 
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.14.4
+
       - name: Run tests with coverage
         run: |
           pytest --cov=helmgen --cov-report=xml --cov-report=term
+
+      - name: Lint and render example chart
+        run: |
+          helmgen examples/docker-compose.yml --output /tmp/chart-internal
+          helmgen examples/docker-compose.yml --output /tmp/chart-ext \
+            --secret-provider externalsecret --store-scope cluster
+          helm lint /tmp/chart-internal /tmp/chart-ext
+          helm template test /tmp/chart-internal > /dev/null
+          helm template test /tmp/chart-ext > /dev/null
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5

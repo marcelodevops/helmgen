@@ -1,0 +1,45 @@
+version: "3.8"
+
+services:
+  web:
+    image: nginx:alpine
+    replicas: 2
+    ports:
+      - "8080:80/tcp"
+    environment:
+      APP_ENV: production
+      SECRET_KEY: change-me-in-values
+    labels:
+      traefik.enable: "true"
+      rule: "Host(`web.example.com`)"
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M
+        requests:
+          cpus: "0.1"
+          memory: 64M
+
+  worker:
+    image: python:3.12-slim
+    command: "python manage.py rqworker"
+    environment:
+      QUEUE_NAME: default
+
+  db:
+    image: postgres:14
+    environment:
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: change-me-in-values
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+
+volumes:
+  db-data:
