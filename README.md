@@ -13,7 +13,8 @@ Auto-generate Helm charts from Docker Compose files.
 - Auto-detect **Ingress** from exposed web ports (80/443/8080) and Traefik-style `Host(...)` labels
 - Replace hardcoded secrets with safe placeholders in `values.yaml`
 - Sensible storage size defaults per database type
-- Maps compose `replicas`, `command`/`args`, `deploy.resources`, and `healthcheck` (→ liveness/readiness probes) into the chart
+- Maps compose `replicas`, `command`/`args`, `deploy.resources`, `healthcheck` (→ liveness/readiness probes), and `depends_on`/`networks` into the chart
+- Optional wait-for initContainers (`waitOnDependencies: true`) to gate startup on dependency Services
 - Default CPU/memory `resources` on all containers, overridable per service in `values.yaml`
 - Optional HTTP liveness/readiness probes via `probePath`/`probePort` in `values.yaml`
 - Standard `app.kubernetes.io/*` labels on every resource (via `_helpers.tpl`)
@@ -110,7 +111,16 @@ A ready-to-try input lives in [`examples/docker-compose.yml`](examples/docker-co
 
 ### Tuning the generated chart
 
-`values.yaml` is meant to be edited after generation:
+`values.yaml` is generated with a documented header describing every tunable;
+edit it directly, or pass `--values-overlay` so customizations survive regeneration:
+
+```yaml
+# my-overrides.yml
+waitOnDependencies: true
+services:
+  web:
+    replicas: 3
+```
 
 ```yaml
 services:
