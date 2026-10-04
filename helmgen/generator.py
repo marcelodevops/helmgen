@@ -164,6 +164,24 @@ def detect_probes(service):
         probe["initialDelaySeconds"] = start_period
     return probe
 
+def normalize_depends_on(depends_on):
+    """Compose depends_on accepts a string, list, or long-syntax map; return a list of names."""
+    if not depends_on:
+        return []
+    if isinstance(depends_on, str):
+        return [depends_on]
+    if isinstance(depends_on, dict):
+        return list(depends_on.keys())
+    return [str(d) for d in depends_on]
+
+def normalize_networks(networks):
+    """Compose networks may be a list of names or a map; return a list of names."""
+    if not networks:
+        return []
+    if isinstance(networks, dict):
+        return list(networks.keys())
+    return [str(n) for n in networks]
+
 def detect_ingress(service, ingress_class="nginx"):
     ingress = None
     ports = service.get("ports", [])
@@ -247,6 +265,7 @@ def generate_helm_chart(compose_path, output_dir, secret_provider, store_scope,
         "services": {},
         "secretProvider": secret_provider,
         "resources": DEFAULT_RESOURCES,
+        "waitOnDependencies": False,
     }
     if secret_provider == "externalsecret":
         values["storeScope"] = store_scope
@@ -329,6 +348,14 @@ def generate_helm_chart(compose_path, output_dir, secret_provider, store_scope,
         if probe:
             service_data["livenessProbe"] = dict(probe)
             service_data["readinessProbe"] = dict(probe)
+
+        # Topology metadata from compose
+        deps = normalize_depends_on(svc.get("depends_on"))
+        if deps:
+            service_data["dependsOn"] = deps
+        nets = normalize_networks(svc.get("networks"))
+        if nets:
+            service_data["networks"] = nets
 
         # Ingress
         ingress = detect_ingress(svc, ingress_class)

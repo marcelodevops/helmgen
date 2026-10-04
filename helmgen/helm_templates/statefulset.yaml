@@ -18,6 +18,20 @@ spec:
       labels:
         {{- include "helmgen.labels" $labels | nindent 8 }}
     spec:
+      {{- if and $.Values.waitOnDependencies $svc.dependsOn }}
+      initContainers:
+        {{- range $dep := $svc.dependsOn }}
+        {{- $depSvc := index $.Values.services $dep }}
+        {{- if and $depSvc $depSvc.ports }}
+        - name: wait-for-{{ $dep }}
+          image: busybox:1.36
+          command:
+            - sh
+            - -c
+            - {{ printf "until nc -z -w 2 %s-%s %v; do sleep 2; done" $.Release.Name $dep (index $depSvc.ports 0).containerPort | quote }}
+        {{- end }}
+        {{- end }}
+      {{- end }}
       containers:
         - name: {{ $name }}
           image: {{ $svc.image | quote }}

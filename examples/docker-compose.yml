@@ -4,6 +4,10 @@ services:
   web:
     image: nginx:alpine
     replicas: 2
+    depends_on:
+      - db
+    networks:
+      - backend
     ports:
       - "8080:80/tcp"
     environment:
@@ -24,6 +28,9 @@ services:
   worker:
     image: python:3.12-slim
     command: "python manage.py rqworker"
+    depends_on:
+      db:
+        condition: service_healthy
     environment:
       QUEUE_NAME: default
 
@@ -43,3 +50,6 @@ services:
 
 volumes:
   db-data:
+
+networks:
+  backend:

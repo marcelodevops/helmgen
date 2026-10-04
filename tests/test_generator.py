@@ -9,6 +9,8 @@ from helmgen.generator import (
     detect_sensitive_env,
     generate_helm_chart,
     is_database,
+    normalize_depends_on,
+    normalize_networks,
     parse_compose_duration,
     parse_port_string,
 )
@@ -220,6 +222,36 @@ class TestComposeResources:
 
     def test_empty(self):
         assert compose_resources_to_k8s({}) == {}
+
+
+class TestTopologyNormalization:
+    def test_depends_on_forms(self):
+        assert normalize_depends_on("db") == ["db"]
+        assert normalize_depends_on(["db", "cache"]) == ["db", "cache"]
+        assert normalize_depends_on({"db": {"condition": "service_healthy"}}) == ["db"]
+        assert normalize_depends_on(None) == []
+
+    def test_networks_forms(self):
+        assert normalize_networks(["frontend"]) == ["frontend"]
+        assert normalize_networks({"frontend": {}}) == ["frontend"]
+        assert normalize_networks(None) == []
+
+    def test_deps_and_networks_in_values(self, tmp_path):
+        gen = TestGenerateChart()
+        _, values = gen.generate(
+            tmp_path,
+            {
+                "db": {"image": "postgres", "ports": ["5432:5432"]},
+                "web": {
+                    "image": "nginx",
+                    "depends_on": ["db"],
+                    "networks": ["frontend"],
+                },
+            },
+        )
+        assert values["services"]["web"]["dependsOn"] == ["db"]
+        assert values["services"]["web"]["networks"] == ["frontend"]
+        assert values["waitOnDependencies"] is False
 
 
 class TestDetectProbes:
