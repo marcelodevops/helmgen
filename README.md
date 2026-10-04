@@ -1,65 +1,42 @@
-## Helmgen
+# Helmgen
+
 Auto-generate Helm charts from Docker Compose files.
 
-**HelmGen** is a Python CLI tool that automatically converts your `docker-compose.yml` into a fully structured Helm chart — including Deployments, Services, PVCs, Ingress, and Secrets (internal or ExternalSecrets).
-##### Features:
+**HelmGen** is a Python CLI tool that converts your `docker-compose.yml` into a structured Helm chart — including Deployments, StatefulSets, Services, PVCs, Ingress, and Secrets (native or ExternalSecrets).
+
+## Features
+
 - Convert **Docker Compose** files directly into **Helm charts**
-- Auto-detect **databases** → generate StatefulSets + PVCs
-- Auto-generate **Kubernetes Secrets** or **ExternalSecrets**
-- Support for **Vault**, **AWS Secrets Manager**, or **ExternalSecrets Operator**
-- Generate **SecretStore** or **ClusterSecretStore** automatically
-- Auto-generate **Ingress** resources for web services
+- Auto-detect **databases** (postgres, mysql, mariadb, mongodb, redis) → StatefulSet + PVC with real volume mount paths
+- Auto-generate **Kubernetes Secrets** or **ExternalSecrets** (External Secrets Operator)
+- Generate **SecretStore** or **ClusterSecretStore**, or reuse an existing one
+- Auto-detect **Ingress** from exposed web ports (80/443/8080) and Traefik-style `Host(...)` labels
 - Replace hardcoded secrets with safe placeholders in `values.yaml`
-- Detect whether secrets should be env vars or mounted files
-- CLI support for flexible options and overrides
+- Sensible storage size defaults per database type
+- Maps compose `replicas`, `command`/`args`, and `deploy.resources` into the chart
+- Default CPU/memory `resources` on all containers, overridable per service in `values.yaml`
+- Optional HTTP liveness/readiness probes via `probePath`/`probePort` in `values.yaml`
+- Standard `app.kubernetes.io/*` labels on every resource (via `_helpers.tpl`)
 
-### Installation
+## Installation
 
-##### From source (recommended for development)
 ```bash
-git clone https://github.com/yourusername/helmgen.git
+pip install helmgen
+```
+
+From source (recommended for development):
+
+```bash
+git clone https://github.com/marcelodevops/helmgen.git
 cd helmgen
-pip install -e . 
-```
-- Then you can run it as a command:
-```bash
-helmgen --help
+pip install -e .
 ```
 
-### Usage
+## Usage
+
 ```bash
 helmgen docker-compose.yml [options]
 ```
-### Example
-```bash
-helmgen docker-compose.yml \
-  --output ./charts/myapp \
-  --secret-provider externalsecret \
-  --store-scope cluster \
-  --reuse-store global-vault-store
-```
-
-
-- This generates
-```bash
-charts/myapp/
-├── Chart.yaml
-├── values.yaml
-└── templates/
-    ├── deployment.yaml
-    ├── service.yaml
-    ├── pvc.yaml
-    ├── ingress.yaml
-    ├── secrets.yaml
-    ├── externalsecret.yaml
-    └── secretstore.yaml
-
-```
-- Then you can deploy
-```bash
-helm install myapp ./charts/myapp
-```
-### CLI options
 
 | Option                  | Description                                     | Default             |
 | ----------------------- | ----------------------------------------------- | ------------------- |
@@ -69,6 +46,8 @@ helm install myapp ./charts/myapp
 | `--reuse-store`         | Name of existing SecretStore/ClusterSecretStore | *None*              |
 
 ### Example
+
+`docker-compose.yml`:
 
 ```yaml
 version: "3.8"
@@ -93,162 +72,79 @@ services:
 
 volumes:
   db-data:
-
 ```
 
-- This will generate a Helm Chart with
+> Hardcoded secrets in compose files are bad practice — HelmGen detects them and replaces their values in `values.yaml` with `<secret-from-values>` placeholders.
 
-    - StatefulSet for Postgres
-    - Deployment for web
-    - Secrets/ExternalSecrets for passwords
-    - PVC for db-data
-    - Ingress if ports are exposed
-
-
-- In this example the sensitive data is hard coded in the compose file with is a very bad practice but it's being used only for purpose of the example demonstration
-
-
-##### Secret management
-- There are 2 options
-    1. Internal (default helm secret)
-    2. External
-
-##### if you want to run it as a python script (not recommended)
+Generate a chart using ExternalSecrets backed by a shared ClusterSecretStore:
 
 ```bash
-python3 generator.py docker-compose.yml \
+helmgen docker-compose.yml \
   --output ./charts/myapp \
   --secret-provider externalsecret \
   --store-scope cluster \
   --reuse-store global-vault-store
-  ```
+```
 
-##### This will create a complete Helm chart with:
+Output:
 
-```bash
+```
 charts/myapp/
 ├── Chart.yaml
 ├── values.yaml
 └── templates/
-    ├── deployment.yaml
+    ├── _helpers.tpl          # standard label helpers
+    ├── deployment.yaml       # non-database services
+    ├── statefulset.yaml      # database services (storage: true)
     ├── service.yaml
     ├── pvc.yaml
     ├── ingress.yaml
-    ├── secrets.yaml
-    ├── externalsecret.yaml
-    └── secretstore.yaml
-
+    ├── secrets.yaml          # rendered only when secretProvider=internal
+    ├── externalsecret.yaml   # rendered only when secretProvider=externalsecret
+    └── secretstore.yaml      # skipped when --reuse-store is set
 ```
 
-##### Templates 
+A ready-to-try input lives in [`examples/docker-compose.yml`](examples/docker-compose.yml).
 
-```bash
-helm_templates/
-├── deployment.yaml
-├── service.yaml
-├── pvc.yaml
-├── ingress.yaml
-├── secrets.yaml
-├── externalsecret.yaml
-└── secretstore.yaml
+### Tuning the generated chart
 
+`values.yaml` is meant to be edited after generation:
+
+```yaml
+services:
+  web:
+    probePath: /healthz   # adds liveness + readiness httpGet probes
+    probePort: 8080
+    replicas: 3
+    resources:            # overrides the global default per service
+      requests: {cpu: 50m, memory: 256Mi}
+resources:                # global default for all containers
+  requests: {cpu: 10m, memory: 128Mi}
+  limits: {cpu: "1", memory: 512Mi}
 ```
 
-##### Summary
+Deploy:
 
-Files and templates directory:
-- generator.py → generates chart structure and populates values.yaml.
-- helm_templates/ → reusable Jinja-style templates compatible with Helm.
-- Seamless handling of:
-
-    - Secrets and ExternalSecrets
-    - Databases as StatefulSets (via PVC)
-    - Ingress auto-detection
-    - ClusterSecretStore / SecretStore support
-
-##### Run this version
-- Generate files and templates from compose file:
-
-```bash
-python3 generator.py docker-compose.yml --output ./charts/myapp --secret-provider externalsecret
-```
-
-- Then install chart:
 ```bash
 helm install myapp ./charts/myapp
-
 ```
 
-##### Dependencies
-
-| Package         | Purpose                                                                                               |
-| --------------- | ----------------------------------------------------------------------------------------------------- |
-| **PyYAML**      | Primary YAML parser for reading `docker-compose.yml`.                                                 |
-| **ruamel.yaml** | More advanced YAML manipulation (preserves comments, ordering).                                       |
-| **jinja2**      | Template rendering for Helm YAML files (used when writing `templates/`).                              |
-| **click**       | Optional CLI framework (if you upgrade from `argparse` later for nicer commands).                     |
-| **rich**        | Optional but recommended — adds colored console output, status spinners, and better error formatting. |
-
-
-##### Install dependencies
-```bash
-pip install -r requirements.txt
-```
-
-##### Update to run it as a CLI tool
-- Usage
+## Development
 
 ```bash
-helmgen docker-compose.yml --output ./charts/myapp
-
+pip install -e .[dev]
+ruff check .
+pytest --cov=helmgen
 ```
 
-##### How it works
+The templates in `helmgen/helm_templates/` are plain Helm templates (copied verbatim into the generated chart); all chart logic driven by `values.yaml` lives in `helmgen/generator.py`.
 
-- project.scripts exposes a command called helmgen
-- That command runs the main() function inside your generator.py
-- Everything else is metadata (version, author, URLs, etc.)
-- Dependencies match the ones from your requirements.txt
+## Dependencies
 
+| Package    | Purpose                              |
+| ---------- | ------------------------------------ |
+| **PyYAML** | Parse `docker-compose.yml` and emit `values.yaml` |
 
-##### Project layout
+## License
 
-```bash
-
-helmgen/
-├── generator.py
-├── pyproject.toml
-├── README.md
-├── requirements.txt
-└── helm_templates/
-    ├── deployment.yaml
-    ├── service.yaml
-    ├── pvc.yaml
-    ├── ingress.yaml
-    ├── secrets.yaml
-    ├── externalsecret.yaml
-    └── secretstore.yaml
-```
-##### Install locally for development
-- From the folder containing pyproject.toml:
-```bash
-pip install -e .
-```
-##### Then you can run it directly:
-```bash
-helmgen docker-compose.yml --output ./charts/myapp
-```
-
-
-##### Build a distributable package
-- to share it or publish it to PyPI (optional):
-```bash
-python -m build
-```
-- and it generates
-```bash
-dist/
-├── helmgen-0.1.0-py3-none-any.whl
-└── helmgen-0.1.0.tar.gz
-
-```
+MIT
