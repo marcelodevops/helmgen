@@ -7,11 +7,16 @@ metadata:
   name: {{ $.Release.Name }}-{{ $name }}-ingress
   labels:
     {{- include "helmgen.labels" $labels | nindent 4 }}
+  {{- if $svc.ingress.annotations }}
   annotations:
     {{- range $key, $val := $svc.ingress.annotations }}
     {{ $key }}: {{ $val | quote }}
     {{- end }}
+  {{- end }}
 spec:
+  {{- if $svc.ingress.className }}
+  ingressClassName: {{ $svc.ingress.className | quote }}
+  {{- end }}
   rules:
     {{- range $rule := $svc.ingress.rules }}
     - host: {{ $rule.host | quote }}

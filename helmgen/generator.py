@@ -164,7 +164,7 @@ def detect_probes(service):
         probe["initialDelaySeconds"] = start_period
     return probe
 
-def detect_ingress(service):
+def detect_ingress(service, ingress_class="nginx"):
     ingress = None
     ports = service.get("ports", [])
     labels = service.get("labels", {})
@@ -216,9 +216,7 @@ def detect_ingress(service):
         }])
 
     if ingress:
-        ingress.setdefault("annotations", {
-            "kubernetes.io/ingress.class": "nginx"
-        })
+        ingress.setdefault("className", ingress_class)
 
     return ingress
 
@@ -226,7 +224,8 @@ def detect_ingress(service):
 # Chart generation
 # -------------------------------
 
-def generate_helm_chart(compose_path, output_dir, secret_provider, store_scope, reuse_store):
+def generate_helm_chart(compose_path, output_dir, secret_provider, store_scope,
+                        reuse_store, ingress_class="nginx"):
     with open(compose_path) as f:
         compose = yaml.safe_load(f)
 
@@ -332,7 +331,7 @@ def generate_helm_chart(compose_path, output_dir, secret_provider, store_scope, 
             service_data["readinessProbe"] = dict(probe)
 
         # Ingress
-        ingress = detect_ingress(svc)
+        ingress = detect_ingress(svc, ingress_class)
         if ingress:
             service_data["ingress"] = ingress
 
@@ -370,6 +369,8 @@ def main():
                         default="namespace", help="SecretStore scope")
     parser.add_argument("--reuse-store", default=None,
                         help="Reuse an existing SecretStore or ClusterSecretStore")
+    parser.add_argument("--ingress-class", default="nginx",
+                        help="ingressClassName for generated Ingress resources")
     args = parser.parse_args()
 
     compose_file = Path(args.compose_file)
@@ -382,6 +383,7 @@ def main():
         secret_provider=args.secret_provider,
         store_scope=args.store_scope,
         reuse_store=args.reuse_store,
+        ingress_class=args.ingress_class,
     )
 
 if __name__ == "__main__":

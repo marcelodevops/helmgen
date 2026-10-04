@@ -78,6 +78,18 @@ class TestDetectIngress:
         svc = {"ports": ["5432:5432"], "labels": {}}
         assert detect_ingress(svc) is None
 
+    def test_default_ingress_class(self):
+        svc = {"ports": ["8080:80"], "labels": {}}
+        assert detect_ingress(svc)["className"] == "nginx"
+
+    def test_custom_ingress_class(self):
+        svc = {"ports": ["8080:80"], "labels": {}}
+        assert detect_ingress(svc, "traefik")["className"] == "traefik"
+
+    def test_no_legacy_class_annotation(self):
+        svc = {"ports": ["8080:80"], "labels": {}}
+        assert "kubernetes.io/ingress.class" not in str(detect_ingress(svc))
+
 
 class TestGenerateChart:
     def generate(self, tmp_path, services, **kwargs):
@@ -190,6 +202,14 @@ class TestGenerateChart:
         web = values["services"]["web"]
         assert web["livenessProbe"]["httpGet"]["path"] == "/healthz"
         assert web["readinessProbe"] == web["livenessProbe"]
+
+    def test_ingress_class_flows_into_values(self, tmp_path):
+        _, values = self.generate(
+            tmp_path,
+            {"web": {"image": "nginx", "ports": ["80:80"]}},
+            ingress_class="traefik",
+        )
+        assert values["services"]["web"]["ingress"]["className"] == "traefik"
 
 
 class TestComposeResources:
