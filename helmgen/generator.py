@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
-import os
 import re
+import shlex
 import sys
 import yaml
 import argparse
 from pathlib import Path
 import importlib.resources as pkg_resources
-import shutil
 from shutil import copyfile
 
 # -------------------------------------------------------------------
@@ -35,7 +34,9 @@ SENSITIVE_KEYS = [
 ]
 
 BASE_HELM_TEMPLATES = [
+    "_helpers.tpl",
     "deployment.yaml",
+    "statefulset.yaml",
     "service.yaml",
     "pvc.yaml",
     "ingress.yaml",
@@ -50,6 +51,11 @@ DEFAULT_STORAGE_SIZES = {
     "mariadb": "5Gi",
     "mongodb": "5Gi",
     "redis": "1Gi",
+}
+
+DEFAULT_RESOURCES = {
+    "requests": {"cpu": "10m", "memory": "128Mi"},
+    "limits": {"cpu": "1", "memory": "512Mi"},
 }
 
 # -------------------------------
@@ -70,6 +76,34 @@ def detect_sensitive_env(env_dict):
             normal[k] = v
     return normal, sensitive
 
+def parse_port_string(p):
+    """Parse a compose port string like '8080:80/tcp' into (published, container) ints."""
+    parts = str(p).split(":")
+    try:
+        container = int(parts[-1].split("/")[0])
+    except ValueError:
+        return None, None
+    published = None
+    if len(parts) > 1 and parts[-2].isdigit():
+        published = int(parts[-2])
+    return published, container
+
+def compose_resources_to_k8s(resources):
+    """Convert compose deploy.resources.{limits,requests} to K8s quantities."""
+    out = {}
+    for role in ("requests", "limits"):
+        vals = resources.get(role) or {}
+        mapped = {}
+        if "cpus" in vals:
+            mapped["cpu"] = f"{int(float(vals['cpus']) * 1000)}m"
+        elif "cpu" in vals:
+            mapped["cpu"] = str(vals["cpu"])
+        if "memory" in vals:
+            mapped["memory"] = str(vals["memory"])
+        if mapped:
+            out[role] = mapped
+    return out
+
 def detect_ingress(service):
     ingress = None
     ports = service.get("ports", [])
@@ -80,11 +114,7 @@ def detect_ingress(service):
     for p in ports:
         port_num = None
         if isinstance(p, str):
-            parts = p.split(":")
-            try:
-                port_num = int(parts[-1])
-            except ValueError:
-                continue
+            _, port_num = parse_port_string(p)
         elif isinstance(p, dict):
             port_num = p.get("target") or p.get("published") or p.get("containerPort")
 
@@ -105,7 +135,7 @@ def detect_ingress(service):
             if host_match:
                 host = host_match.group(1)
         elif "Host(" in val:
-            host_match = re.search(r"Host\(`?([^)]+)`?\)", val)
+            host_match = re.search(r"Host\(`?([^)`]+)`?\)", val)
             if host_match:
                 host = host_match.group(1)
         elif key in ["ingress.host", "ingress.domain"]:
@@ -154,7 +184,15 @@ def generate_helm_chart(compose_path, output_dir, secret_provider, store_scope, 
     }
 
     # Build values.yaml
-    values = {"services": {}, "secretProvider": secret_provider}
+    values = {
+        "services": {},
+        "secretProvider": secret_provider,
+        "resources": DEFAULT_RESOURCES,
+    }
+    if secret_provider == "externalsecret":
+        values["storeScope"] = store_scope
+        if reuse_store:
+            values["reuseStore"] = reuse_store
 
     for name, svc in compose.get("services", {}).items():
         image = svc.get("image", "unknown")
@@ -187,10 +225,12 @@ def generate_helm_chart(compose_path, output_dir, secret_provider, store_scope, 
         ports = []
         for p in svc.get("ports", []):
             if isinstance(p, str):
-                parts = p.split(":")
-                port_map = {"containerPort": int(parts[-1])}
-                if len(parts) > 1 and parts[0].isdigit():
-                    port_map["published"] = int(parts[0])
+                published, container = parse_port_string(p)
+                if container is None:
+                    continue
+                port_map = {"containerPort": container}
+                if published is not None:
+                    port_map["published"] = published
                 ports.append(port_map)
             elif isinstance(p, dict):
                 ports.append(p)
@@ -200,6 +240,30 @@ def generate_helm_chart(compose_path, output_dir, secret_provider, store_scope, 
         # Volumes
         if "volumes" in svc:
             service_data["storage"] = True
+            mount_paths = []
+            for v in svc["volumes"]:
+                if isinstance(v, str):
+                    parts = v.split(":")
+                    if len(parts) >= 2 and parts[1] not in mount_paths:
+                        mount_paths.append(parts[1])
+            if mount_paths:
+                service_data["storagePaths"] = mount_paths
+
+        # Replicas / command / args
+        if "replicas" in svc:
+            service_data["replicas"] = int(svc["replicas"])
+        for field in ("command", "args"):
+            val = svc.get(field)
+            if val:
+                service_data[field] = (
+                    shlex.split(val) if isinstance(val, str) else [str(x) for x in val]
+                )
+
+        # Resources from deploy.resources
+        deploy = svc.get("deploy") or {}
+        res = compose_resources_to_k8s(deploy.get("resources") or {})
+        if res:
+            service_data["resources"] = res
 
         # Ingress
         ingress = detect_ingress(svc)
