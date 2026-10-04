@@ -1,5 +1,4 @@
 import subprocess
-import sys
 
 def test_help(cli_path):
     """Verify `helmgen --help` runs correctly."""

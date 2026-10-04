@@ -1,6 +1,5 @@
 import pytest
 from pathlib import Path
-import subprocess
 import sys
 
 @pytest.fixture(scope="session")
