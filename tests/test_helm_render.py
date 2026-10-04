@@ -39,6 +39,11 @@ services:
     ports: ["8080:80/tcp"]
     environment: {APP_ENV: prod, SECRET_KEY: x}
     labels: {rule: "Host(`web.example.com`)"}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/healthz"]
+      interval: 15s
+      timeout: 3s
+      retries: 5
   worker:
     image: python:3.12-slim
   db:
@@ -60,11 +65,6 @@ def build(tmp_path, full_compose, provider="internal"):
         store_scope="namespace",
         reuse_store=None,
     )
-    # probePath is not a compose field; inject as a user editing values.yaml would
-    values = yaml.safe_load((out / "values.yaml").read_text())
-    values["services"]["web"]["probePath"] = "/healthz"
-    values["services"]["web"]["probePort"] = 8080
-    (out / "values.yaml").write_text(yaml.safe_dump(values, sort_keys=False))
     return out
 
 

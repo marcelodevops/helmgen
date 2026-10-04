@@ -57,13 +57,21 @@ spec:
           resources:
             {{- toYaml $res | nindent 12 }}
           {{- end }}
-          {{- if $svc.probePath }}
+          {{- if $svc.livenessProbe }}
+          livenessProbe:
+            {{- toYaml $svc.livenessProbe | nindent 12 }}
+          {{- else if $svc.probePath }}
           livenessProbe:
             httpGet:
               path: {{ $svc.probePath }}
               port: {{ $svc.probePort | default 80 }}
             initialDelaySeconds: 15
             periodSeconds: 20
+          {{- end }}
+          {{- if $svc.readinessProbe }}
+          readinessProbe:
+            {{- toYaml $svc.readinessProbe | nindent 12 }}
+          {{- else if $svc.probePath }}
           readinessProbe:
             httpGet:
               path: {{ $svc.probePath }}

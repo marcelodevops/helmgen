@@ -5,9 +5,11 @@ from helmgen.generator import (
     DEFAULT_RESOURCES,
     compose_resources_to_k8s,
     detect_ingress,
+    detect_probes,
     detect_sensitive_env,
     generate_helm_chart,
     is_database,
+    parse_compose_duration,
     parse_port_string,
 )
 
@@ -173,6 +175,22 @@ class TestGenerateChart:
             "limits": {"cpu": "500m", "memory": "256M"}
         }
 
+    def test_healthcheck_becomes_probes(self, tmp_path):
+        _, values = self.generate(
+            tmp_path,
+            {
+                "web": {
+                    "image": "nginx",
+                    "healthcheck": {
+                        "test": ["CMD", "curl", "-f", "http://localhost/healthz"]
+                    },
+                }
+            },
+        )
+        web = values["services"]["web"]
+        assert web["livenessProbe"]["httpGet"]["path"] == "/healthz"
+        assert web["readinessProbe"] == web["livenessProbe"]
+
 
 class TestComposeResources:
     def test_cpus_converted_to_millicores(self):
@@ -182,4 +200,47 @@ class TestComposeResources:
 
     def test_empty(self):
         assert compose_resources_to_k8s({}) == {}
+
+
+class TestDetectProbes:
+    def test_cmd_curl_url_becomes_http_get(self):
+        svc = {"healthcheck": {
+            "test": ["CMD", "curl", "-f", "http://localhost:8080/healthz"],
+            "interval": "30s",
+            "timeout": "5s",
+            "retries": 4,
+        }}
+        probe = detect_probes(svc)
+        assert probe["httpGet"] == {"path": "/healthz", "port": 8080}
+        assert probe["periodSeconds"] == 30
+        assert probe["timeoutSeconds"] == 5
+        assert probe["failureThreshold"] == 4
+
+    def test_cmd_shell_string_parsed(self):
+        svc = {"healthcheck": {"test": ["CMD-SHELL", "wget -q http://localhost/ || exit 1"]}}
+        probe = detect_probes(svc)
+        assert probe["httpGet"] == {"path": "/", "port": 80}
+
+    def test_plain_test_string_with_url(self):
+        svc = {"healthcheck": {"test": "curl -fs https://localhost:443/status"}}
+        assert detect_probes(svc)["httpGet"] == {"path": "/status", "port": 443}
+
+    def test_non_http_becomes_exec(self):
+        svc = {"healthcheck": {"test": ["CMD", "pg_isready", "-U", "user"]}}
+        assert detect_probes(svc) == {"exec": {"command": ["pg_isready", "-U", "user"]}}
+
+    def test_disable_and_missing(self):
+        assert detect_probes({"healthcheck": {"disable": True, "test": "curl x"}}) is None
+        assert detect_probes({}) is None
+
+    def test_start_period_maps_to_initial_delay(self):
+        svc = {"healthcheck": {"test": "curl http://localhost/h", "start_period": "10s"}}
+        assert detect_probes(svc)["initialDelaySeconds"] == 10
+
+    @pytest.mark.parametrize(
+        "raw, seconds",
+        [("30s", 30), ("500ms", 1), ("2m", 120), ("1h", 3600), ("nope", None)],
+    )
+    def test_duration_parsing(self, raw, seconds):
+        assert parse_compose_duration(raw) == seconds
 

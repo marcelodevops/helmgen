@@ -58,6 +58,14 @@ spec:
           resources:
             {{- toYaml $res | nindent 12 }}
           {{- end }}
+          {{- if $svc.livenessProbe }}
+          livenessProbe:
+            {{- toYaml $svc.livenessProbe | nindent 12 }}
+          {{- end }}
+          {{- if $svc.readinessProbe }}
+          readinessProbe:
+            {{- toYaml $svc.readinessProbe | nindent 12 }}
+          {{- end }}
           {{- if $svc.storagePaths }}
           volumeMounts:
             {{- range $svc.storagePaths }}

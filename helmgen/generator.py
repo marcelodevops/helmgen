@@ -104,6 +104,66 @@ def compose_resources_to_k8s(resources):
             out[role] = mapped
     return out
 
+def parse_compose_duration(value):
+    """Convert a compose duration like '30s', '500ms' or '1m' to whole seconds."""
+    m = re.match(r"^(\d+(?:\.\d+)?)(ms|s|m|h)?$", str(value).strip())
+    if not m:
+        return None
+    num, unit = float(m.group(1)), m.group(2) or "s"
+    seconds = num * {"ms": 0.001, "s": 1, "m": 60, "h": 3600}[unit]
+    return max(int(seconds), 1)
+
+def detect_probes(service):
+    """Build a Kubernetes probe from a compose healthcheck, or None."""
+    hc = service.get("healthcheck") or {}
+    if hc.get("disable"):
+        return None
+    test = hc.get("test")
+    if not test:
+        return None
+
+    if isinstance(test, list):
+        cmd = [str(x) for x in test]
+        if cmd and cmd[0].upper() in ("CMD", "CMD-SHELL", "NONE"):
+            cmd = cmd[1:]
+        if len(cmd) == 1:
+            cmd = shlex.split(cmd[0])
+    else:
+        cmd = shlex.split(str(test))
+    if not cmd:
+        return None
+
+    url = next((a for a in cmd if a.lower().startswith(("http://", "https://"))), None)
+    if url:
+        m = re.match(r"https?://[^/:]+(?::(\d+))?(/[^?#]*)?", url, re.I)
+        if m:
+            default_port = 443 if url.lower().startswith("https") else 80
+            probe = {"httpGet": {
+                "path": m.group(2) or "/",
+                "port": int(m.group(1)) if m.group(1) else default_port,
+            }}
+        else:
+            probe = {"exec": {"command": cmd}}
+    else:
+        probe = {"exec": {"command": cmd}}
+
+    def duration(field, default=None):
+        value = hc.get(field, default)
+        return parse_compose_duration(value) if value is not None else None
+
+    timeout = duration("timeout")
+    interval = duration("interval")
+    start_period = duration("start_period")
+    if timeout:
+        probe["timeoutSeconds"] = timeout
+    if interval:
+        probe["periodSeconds"] = interval
+    if hc.get("retries") is not None:
+        probe["failureThreshold"] = int(hc["retries"])
+    if start_period and start_period > 1:
+        probe["initialDelaySeconds"] = start_period
+    return probe
+
 def detect_ingress(service):
     ingress = None
     ports = service.get("ports", [])
@@ -264,6 +324,12 @@ def generate_helm_chart(compose_path, output_dir, secret_provider, store_scope, 
         res = compose_resources_to_k8s(deploy.get("resources") or {})
         if res:
             service_data["resources"] = res
+
+        # healthcheck → liveness/readiness probes
+        probe = detect_probes(svc)
+        if probe:
+            service_data["livenessProbe"] = dict(probe)
+            service_data["readinessProbe"] = dict(probe)
 
         # Ingress
         ingress = detect_ingress(svc)
