@@ -1,9 +1,13 @@
+import subprocess
+import sys
+
 import yaml
 import pytest
 
 from helmgen.generator import (
     DEFAULT_RESOURCES,
     compose_resources_to_k8s,
+    deep_merge,
     detect_ingress,
     detect_probes,
     detect_sensitive_env,
@@ -295,4 +299,78 @@ class TestDetectProbes:
     )
     def test_duration_parsing(self, raw, seconds):
         assert parse_compose_duration(raw) == seconds
+
+
+class TestValuesOverlay:
+    def test_deep_merge(self):
+        base = {"a": {"x": 1, "y": 2}, "b": [1], "c": 3}
+        overlay = {"a": {"y": 3, "z": 4}, "b": [2], "d": 5}
+        assert deep_merge(base, overlay) == {
+            "a": {"x": 1, "y": 3, "z": 4},
+            "b": [2],
+            "c": 3,
+            "d": 5,
+        }
+
+    def _write_inputs(self, tmp_path):
+        compose = tmp_path / "docker-compose.yml"
+        compose.write_text(
+            yaml.safe_dump(
+                {"services": {"web": {"image": "nginx", "environment": ["FOO=bar"]}}},
+                sort_keys=False,
+            )
+        )
+        overlay = tmp_path / "overlay.yml"
+        overlay.write_text(
+            yaml.safe_dump(
+                {
+                    "resources": {"limits": {"memory": "1Gi"}},
+                    "services": {"web": {"replicas": 5}},
+                    "waitOnDependencies": True,
+                }
+            )
+        )
+        return compose, overlay
+
+    def test_overlay_merges_into_generated_values(self, tmp_path):
+        compose, overlay = self._write_inputs(tmp_path)
+        out = tmp_path / "chart"
+        generate_helm_chart(
+            compose_path=compose,
+            output_dir=out,
+            secret_provider="internal",
+            store_scope="namespace",
+            reuse_store=None,
+            values_overlay=str(overlay),
+        )
+        values = yaml.safe_load((out / "values.yaml").read_text())
+        web = values["services"]["web"]
+        assert web["replicas"] == 5
+        assert web["env"] == {"FOO": "bar"}  # generated keys survive
+        assert values["resources"]["limits"]["memory"] == "1Gi"
+        assert values["resources"]["requests"]["cpu"] == DEFAULT_RESOURCES["requests"]["cpu"]
+        assert values["waitOnDependencies"] is True
+
+    def test_cli_accepts_values_overlay(self, tmp_path):
+        compose, overlay = self._write_inputs(tmp_path)
+        out = tmp_path / "cli-chart"
+        result = subprocess.run(
+            [sys.executable, "-m", "helmgen", str(compose), "-o", str(out),
+             "--values-overlay", str(overlay)],
+            capture_output=True, text=True,
+        )
+        assert result.returncode == 0, result.stderr
+        values = yaml.safe_load((out / "values.yaml").read_text())
+        assert values["services"]["web"]["replicas"] == 5
+
+    def test_missing_overlay_file_exits(self, tmp_path):
+        compose, _ = self._write_inputs(tmp_path)
+        result = subprocess.run(
+            [sys.executable, "-m", "helmgen", str(compose), "-o", str(tmp_path / "c"),
+             "--values-overlay", str(tmp_path / "nope.yml")],
+            capture_output=True, text=True,
+        )
+        assert result.returncode != 0
+        assert "not found" in result.stderr.lower()
+
 

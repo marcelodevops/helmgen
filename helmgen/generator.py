@@ -242,8 +242,18 @@ def detect_ingress(service, ingress_class="nginx"):
 # Chart generation
 # -------------------------------
 
+def deep_merge(base, overlay):
+    """Recursively merge overlay into base (overlay wins); non-dicts replace."""
+    out = dict(base)
+    for k, v in overlay.items():
+        if k in out and isinstance(out[k], dict) and isinstance(v, dict):
+            out[k] = deep_merge(out[k], v)
+        else:
+            out[k] = v
+    return out
+
 def generate_helm_chart(compose_path, output_dir, secret_provider, store_scope,
-                        reuse_store, ingress_class="nginx"):
+                        reuse_store, ingress_class="nginx", values_overlay=None):
     with open(compose_path) as f:
         compose = yaml.safe_load(f)
 
@@ -364,6 +374,12 @@ def generate_helm_chart(compose_path, output_dir, secret_provider, store_scope,
 
         values["services"][name] = service_data
 
+    if values_overlay:
+        overlay = yaml.safe_load(Path(values_overlay).read_text()) or {}
+        if not isinstance(overlay, dict):
+            raise ValueError("values overlay must be a YAML mapping")
+        values = deep_merge(values, overlay)
+
     # Save Chart.yaml and values.yaml
     with open(output_dir / "Chart.yaml", "w") as f:
         yaml.safe_dump(chart_yaml, f, sort_keys=False)
@@ -398,11 +414,16 @@ def main():
                         help="Reuse an existing SecretStore or ClusterSecretStore")
     parser.add_argument("--ingress-class", default="nginx",
                         help="ingressClassName for generated Ingress resources")
+    parser.add_argument("--values-overlay", default=None, metavar="FILE",
+                        help="YAML file deep-merged into the generated values.yaml")
     args = parser.parse_args()
 
     compose_file = Path(args.compose_file)
     if not compose_file.exists():
         sys.exit(f"File not found: {compose_file}")
+
+    if args.values_overlay and not Path(args.values_overlay).exists():
+        sys.exit(f"Values overlay not found: {args.values_overlay}")
 
     generate_helm_chart(
         compose_path=compose_file,
@@ -411,6 +432,7 @@ def main():
         store_scope=args.store_scope,
         reuse_store=args.reuse_store,
         ingress_class=args.ingress_class,
+        values_overlay=args.values_overlay,
     )
 
 if __name__ == "__main__":

@@ -45,6 +45,7 @@ helmgen docker-compose.yml [options]
 | `--store-scope`         | `namespace` or `cluster` SecretStore            | `namespace`         |
 | `--reuse-store`         | Name of existing SecretStore/ClusterSecretStore | *None*              |
 | `--ingress-class`       | `ingressClassName` for generated Ingress        | `nginx`             |
+| `--values-overlay`      | YAML file deep-merged into generated values     | *None*              |
 
 ### Example
 
