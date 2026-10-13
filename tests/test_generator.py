@@ -503,5 +503,44 @@ class TestFlavors:
         assert values["services"]["web"]["flavor"] == "payara"
 
 
+class TestChartMetadata:
+    def test_custom_chart_metadata(self, tmp_path):
+        compose = write_compose(tmp_path, {"web": {"image": "nginx"}})
+        out = tmp_path / "custom-chart"
+        generate_helm_chart(
+            compose_path=compose,
+            output_dir=out,
+            secret_provider="internal",
+            store_scope="namespace",
+            reuse_store=None,
+            chart_version="1.2.3",
+            app_version="2.4.0",
+            chart_name="my-custom-app",
+        )
+        chart_yaml = yaml.safe_load((out / "Chart.yaml").read_text())
+        assert chart_yaml["version"] == "1.2.3"
+        assert chart_yaml["appVersion"] == "2.4.0"
+        assert chart_yaml["name"] == "my-custom-app"
+
+    def test_cli_accepts_chart_metadata_flags(self, tmp_path):
+        compose = write_compose(tmp_path, {"web": {"image": "nginx"}})
+        out = tmp_path / "cli-meta-chart"
+        result = subprocess.run(
+            [
+                sys.executable, "-m", "helmgen", str(compose), "-o", str(out),
+                "--chart-version", "0.5.0",
+                "--app-version", "3.0.1",
+                "--chart-name", "awesome-app",
+            ],
+            capture_output=True, text=True,
+        )
+        assert result.returncode == 0, result.stderr
+        chart_yaml = yaml.safe_load((out / "Chart.yaml").read_text())
+        assert chart_yaml["version"] == "0.5.0"
+        assert chart_yaml["appVersion"] == "3.0.1"
+        assert chart_yaml["name"] == "awesome-app"
+
+
+
 
 

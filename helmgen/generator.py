@@ -404,7 +404,8 @@ def apply_flavor(service_data, flavor):
 
 def generate_helm_chart(compose_path, output_dir, secret_provider, store_scope,
                         reuse_store, ingress_class="nginx", values_overlay=None,
-                        flavor="generic"):
+                        flavor="generic", chart_version="0.1.0", app_version="1.0.0",
+                        chart_name=None):
     canonical_flavor = FLAVOR_ALIASES.get(str(flavor).lower(), str(flavor).lower())
     if canonical_flavor not in SUPPORTED_FLAVORS:
         raise ValueError(
@@ -421,9 +422,9 @@ def generate_helm_chart(compose_path, output_dir, secret_provider, store_scope,
     # Chart.yaml
     chart_yaml = {
         "apiVersion": "v2",
-        "name": output_dir.name,
-        "version": "0.1.0",
-        "appVersion": "1.0.0",
+        "name": chart_name or output_dir.name,
+        "version": chart_version,
+        "appVersion": app_version,
         "description": f"Helm chart auto-generated from {compose_path.name}"
     }
 
@@ -585,6 +586,12 @@ def main():
                         choices=["generic", "spring-boot", "springboot", "payara"],
                         default="generic",
                         help="Template flavor preset (generic, spring-boot, payara)")
+    parser.add_argument("--chart-version", default="0.1.0",
+                        help="Chart version in Chart.yaml (default: 0.1.0)")
+    parser.add_argument("--app-version", default="1.0.0",
+                        help="Application version in Chart.yaml (default: 1.0.0)")
+    parser.add_argument("--chart-name", default=None,
+                        help="Chart name in Chart.yaml (defaults to output directory name)")
     args = parser.parse_args()
 
     compose_file = Path(args.compose_file)
@@ -603,6 +610,9 @@ def main():
         ingress_class=args.ingress_class,
         values_overlay=args.values_overlay,
         flavor=args.flavor,
+        chart_version=args.chart_version,
+        app_version=args.app_version,
+        chart_name=args.chart_name,
     )
 
 if __name__ == "__main__":

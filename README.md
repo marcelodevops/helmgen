@@ -49,6 +49,9 @@ helmgen docker-compose.yml [options]
 | `--ingress-class`       | `ingressClassName` for generated Ingress        | `nginx`             |
 | `--values-overlay`      | YAML file deep-merged into generated values     | *None*              |
 | `--flavor, -f`          | Template flavor (`generic`, `spring-boot`, `payara`) | `generic`      |
+| `--chart-version`       | Chart version in `Chart.yaml`                   | `0.1.0`             |
+| `--app-version`         | Application version in `Chart.yaml`             | `1.0.0`             |
+| `--chart-name`          | Chart name in `Chart.yaml`                      | *Directory name*    |
 
 ### Workload Flavors (Spring Boot & Payara)
 
