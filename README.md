@@ -52,22 +52,101 @@ helmgen docker-compose.yml [options]
 
 ### Workload Flavors (Spring Boot & Payara)
 
-HelmGen supports framework-tailored presets for JVM workloads via `--flavor` or per-service label `helmgen.flavor` (or automatic image name heuristics):
+JVM runtimes require distinct lifecycle handling compared to lightweight Go or Node services: long initialization times that trigger false-positive liveness failures, framework-specific health check paths, higher baseline heap memory, and multi-port container layouts (e.g. Payara admin port 4848).
 
-- **Spring Boot** (`spring-boot` / `springboot`): Configures Actuator health probes (`/actuator/health/liveness`, `/actuator/health/readiness`), sets up a `startupProbe` to accommodate JVM warm-up, and allocates sensible JVM default memory/CPU limits (512Mi / 1Gi).
-- **Payara** (`payara`): Configures Eclipse MicroProfile Health endpoints (`/health/live`, `/health/ready`), adds a generous `startupProbe` (allowing slow deployments without pod restarts), protects admin port 4848 from probes/ingress, and allocates server-appropriate resource defaults (512Mi / 2Gi).
+HelmGen provides built-in flavor presets:
 
-You can set a global flavor with `--flavor` or tag individual services in `docker-compose.yml`:
+- **Spring Boot** (`spring-boot` or alias `springboot` / `spring`):
+  - **Liveness probe**: HTTP GET `/actuator/health/liveness` (port 8080 or first container port)
+  - **Readiness probe**: HTTP GET `/actuator/health/readiness` (port 8080 or first container port)
+  - **Startup probe**: HTTP GET `/actuator/health/liveness` (`failureThreshold: 20`, `periodSeconds: 5` = up to 100s boot window before liveness triggers)
+  - **Resource defaults**: Requests `100m` CPU / `512Mi` memory; Limits `1` CPU / `1Gi` memory
+- **Payara** (`payara`):
+  - **Liveness probe**: HTTP GET `/health/live` (port 8080, automatically bypassing admin port 4848)
+  - **Readiness probe**: HTTP GET `/health/ready` (port 8080)
+  - **Startup probe**: HTTP GET `/health/live` (`failureThreshold: 30`, `periodSeconds: 5` = up to 150s startup/deployment window)
+  - **Resource defaults**: Requests `200m` CPU / `512Mi` memory; Limits `2` CPU / `2Gi` memory
+
+#### Flavor Resolution Hierarchy
+
+HelmGen determines each service's flavor using the following precedence:
+
+1. **Service Label** in `docker-compose.yml`: `helmgen.flavor: "spring-boot"` or `flavor: "payara"`
+2. **Image Name Heuristic**: Images containing `payara` resolve to `payara`; images containing `spring-boot` or `springboot` resolve to `spring-boot`
+3. **CLI Default**: `--flavor <name>` (defaults to `generic` when omitted)
+
+#### Example: Mixed Workload in `docker-compose.yml`
+
+```yaml
+version: "3.8"
+services:
+  # Explicitly labeled flavor
+  order-service:
+    image: myrepo/orders:1.0
+    labels:
+      helmgen.flavor: "spring-boot"
+    ports:
+      - "8080:8080"
+
+  # Auto-detected via image name
+  legacy-app:
+    image: payara/micro:6.2023.4
+    ports:
+      - "8080:8080"
+      - "4848:4848"
+
+  # Falls back to generic flavor (or --flavor default)
+  cache:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+```
+
+#### Generated `values.yaml` Snippet
+
+When a flavor is applied, `values.yaml` includes the tailored probes and resource defaults:
 
 ```yaml
 services:
-  api:
-    image: my-app:latest
-    labels:
-      helmgen.flavor: "spring-boot"
-  legacy-svc:
-    image: payara/micro:6.2023.4
+  order-service:
+    flavor: spring-boot
+    image: myrepo/orders:1.0
+    ports:
+      - containerPort: 8080
+    startupProbe:
+      httpGet:
+        path: /actuator/health/liveness
+        port: 8080
+      initialDelaySeconds: 10
+      periodSeconds: 5
+      timeoutSeconds: 3
+      failureThreshold: 20
+    livenessProbe:
+      httpGet:
+        path: /actuator/health/liveness
+        port: 8080
+      initialDelaySeconds: 20
+      periodSeconds: 15
+      timeoutSeconds: 3
+      failureThreshold: 3
+    readinessProbe:
+      httpGet:
+        path: /actuator/health/readiness
+        port: 8080
+      initialDelaySeconds: 10
+      periodSeconds: 10
+      timeoutSeconds: 3
+      failureThreshold: 3
+    resources:
+      requests:
+        cpu: 100m
+        memory: 512Mi
+      limits:
+        cpu: "1"
+        memory: 1Gi
 ```
+
+> **Note**: Explicit compose configurations always take precedence. If a service defines its own `healthcheck` in compose, that check is mapped to `livenessProbe` and `readinessProbe` while preserving the generated `startupProbe`. Likewise, any `deploy.resources` defined in compose overrides flavor resource defaults.
 
 ### Example
 
@@ -128,7 +207,7 @@ charts/myapp/
     └── secretstore.yaml      # skipped when --reuse-store is set
 ```
 
-A ready-to-try input lives in [`examples/docker-compose.yml`](examples/docker-compose.yml).
+A ready-to-try input lives in [`examples/docker-compose.yml`](examples/docker-compose.yml), and a Spring Boot / Payara flavor example is in [`examples/docker-compose-flavors.yml`](examples/docker-compose-flavors.yml).
 
 ### Tuning the generated chart
 

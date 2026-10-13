@@ -1,0 +1,38 @@
+version: "3.8"
+
+services:
+  spring-app:
+    image: myorg/spring-boot-demo:latest
+    labels:
+      helmgen.flavor: "spring-boot"
+    ports:
+      - "8080:8080"
+    environment:
+      SPRING_PROFILES_ACTIVE: prod
+      DB_PASSWORD: change-me-in-values
+    depends_on:
+      - db
+
+  payara-app:
+    image: payara/micro:6.2023.4
+    ports:
+      - "8080:8080"
+      - "4848:4848"
+    environment:
+      DEPLOY_DIR: /opt/payara/deployments
+      DB_PASSWORD: change-me-in-values
+    depends_on:
+      - db
+
+  db:
+    image: postgres:14
+    environment:
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: change-me-in-values
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+
+volumes:
+  db-data:
