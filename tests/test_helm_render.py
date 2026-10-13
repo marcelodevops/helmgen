@@ -57,14 +57,15 @@ services:
     return compose
 
 
-def build(tmp_path, full_compose, provider="internal"):
-    out = tmp_path / f"chart-{provider}"
+def build(tmp_path, full_compose, provider="internal", flavor="generic"):
+    out = tmp_path / f"chart-{provider}-{flavor}"
     generate_helm_chart(
         compose_path=full_compose,
         output_dir=out,
         secret_provider=provider,
         store_scope="namespace",
         reuse_store=None,
+        flavor=flavor,
     )
     return out
 
@@ -118,3 +119,49 @@ def test_wait_on_dependencies_renders_init_container(tmp_path, full_compose):
     init = web["spec"]["template"]["spec"]["initContainers"]
     assert init[0]["name"] == "wait-for-db"
     assert "test-db 5432" in init[0]["command"][2]
+
+
+def test_spring_boot_flavor_lints_and_renders(tmp_path):
+    compose = tmp_path / "docker-compose.yml"
+    compose.write_text(
+        """
+services:
+  app:
+    image: springboot-service:latest
+    ports: ["8080:8080"]
+"""
+    )
+    chart = build(tmp_path, compose, flavor="spring-boot")
+    lint_ok(chart)
+    output = render_ok(chart)
+    docs = [d for d in yaml.safe_load_all(output) if d and d["kind"] == "Deployment"]
+    assert len(docs) == 1
+    app = docs[0]
+    container = app["spec"]["template"]["spec"]["containers"][0]
+    assert container["startupProbe"]["httpGet"]["path"] == "/actuator/health/liveness"
+    assert container["livenessProbe"]["httpGet"]["path"] == "/actuator/health/liveness"
+    assert container["readinessProbe"]["httpGet"]["path"] == "/actuator/health/readiness"
+
+
+def test_payara_flavor_lints_and_renders(tmp_path):
+    compose = tmp_path / "docker-compose.yml"
+    compose.write_text(
+        """
+services:
+  app:
+    image: payara/micro:6.2023.4
+    ports: ["8080:8080", "4848:4848"]
+"""
+    )
+    chart = build(tmp_path, compose, flavor="payara")
+    lint_ok(chart)
+    output = render_ok(chart)
+    docs = [d for d in yaml.safe_load_all(output) if d and d["kind"] == "Deployment"]
+    assert len(docs) == 1
+    app = docs[0]
+    container = app["spec"]["template"]["spec"]["containers"][0]
+    assert container["startupProbe"]["httpGet"]["path"] == "/health/live"
+    assert container["livenessProbe"]["httpGet"]["path"] == "/health/live"
+    assert container["readinessProbe"]["httpGet"]["path"] == "/health/ready"
+    assert container["resources"]["limits"]["memory"] == "2Gi"
+
