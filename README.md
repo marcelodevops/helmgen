@@ -13,6 +13,7 @@ Auto-generate Helm charts from Docker Compose files.
 - Auto-detect **Ingress** from exposed web ports (80/443/8080) and Traefik-style `Host(...)` labels
 - Replace hardcoded secrets with safe placeholders in `values.yaml`
 - Sensible storage size defaults per database type
+- **Workload flavors** (`--flavor`): presets for **Spring Boot** (Actuator probes, startup probe, JVM memory) and **Payara** (MicroProfile `/health/*`, startup probe, admin port protection) with auto-detection
 - Maps compose `replicas`, `command`/`args`, `deploy.resources`, `healthcheck` (→ liveness/readiness probes), and `depends_on`/`networks` into the chart
 - Optional wait-for initContainers (`waitOnDependencies: true`) to gate startup on dependency Services
 - Default CPU/memory `resources` on all containers, overridable per service in `values.yaml`
@@ -47,6 +48,26 @@ helmgen docker-compose.yml [options]
 | `--reuse-store`         | Name of existing SecretStore/ClusterSecretStore | *None*              |
 | `--ingress-class`       | `ingressClassName` for generated Ingress        | `nginx`             |
 | `--values-overlay`      | YAML file deep-merged into generated values     | *None*              |
+| `--flavor, -f`          | Template flavor (`generic`, `spring-boot`, `payara`) | `generic`      |
+
+### Workload Flavors (Spring Boot & Payara)
+
+HelmGen supports framework-tailored presets for JVM workloads via `--flavor` or per-service label `helmgen.flavor` (or automatic image name heuristics):
+
+- **Spring Boot** (`spring-boot` / `springboot`): Configures Actuator health probes (`/actuator/health/liveness`, `/actuator/health/readiness`), sets up a `startupProbe` to accommodate JVM warm-up, and allocates sensible JVM default memory/CPU limits (512Mi / 1Gi).
+- **Payara** (`payara`): Configures Eclipse MicroProfile Health endpoints (`/health/live`, `/health/ready`), adds a generous `startupProbe` (allowing slow deployments without pod restarts), protects admin port 4848 from probes/ingress, and allocates server-appropriate resource defaults (512Mi / 2Gi).
+
+You can set a global flavor with `--flavor` or tag individual services in `docker-compose.yml`:
+
+```yaml
+services:
+  api:
+    image: my-app:latest
+    labels:
+      helmgen.flavor: "spring-boot"
+  legacy-svc:
+    image: payara/micro:6.2023.4
+```
 
 ### Example
 
