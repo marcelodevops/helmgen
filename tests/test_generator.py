@@ -16,10 +16,16 @@ from helmgen.generator import (
     detect_probes,
     detect_sensitive_env,
     generate_helm_chart,
+    image_repo,
     is_database,
+    is_sensitive_key,
+    map_healthcheck,
     normalize_depends_on,
+    normalize_labels,
     normalize_networks,
+    normalize_port_entry,
     parse_compose_duration,
+    parse_env_file,
     parse_port_string,
 )
 
@@ -44,6 +50,21 @@ class TestParsePortString:
     def test_parsing(self, raw, expected):
         assert parse_port_string(raw) == expected
 
+    @pytest.mark.parametrize(
+        "entry, expected",
+        [
+            ({"target": 8080, "published": "80", "protocol": "udp"},
+             {"containerPort": 8080, "published": 80, "protocol": "UDP"}),
+            ({"published": 8080}, None),
+            ({"target": 443, "mode": "hostip"}, {"containerPort": 443, "mode": "hostip"}),
+        ],
+    )
+    def test_long_syntax(self, entry, expected):
+        assert normalize_port_entry(entry) == expected
+
+    def test_unparsable_string_has_no_target(self):
+        assert normalize_port_entry("not-a-port") is None
+
 
 class TestSensitiveEnv:
     def test_splits_sensitive_and_normal(self):
@@ -61,6 +82,74 @@ class TestIsDatabase:
     )
     def test_detection(self, image, expected):
         assert is_database(image) is expected
+
+    @pytest.mark.parametrize(
+        "image, expected",
+        [
+            ("bitnami/postgresql:16", True),
+            ("mongo:7", True),
+            ("prometheuscommunity/postgres-exporter", False),
+            ("otel/opentelemetry-collector-contrib:0.90.0", False),
+            ("mysql-exporter:1.2", False),
+            ("redis-commander", False),
+        ],
+    )
+    def test_repo_name_matching(self, image, expected):
+        assert is_database(image) is expected
+
+    @pytest.mark.parametrize(
+        "image, repo",
+        [
+            ("registry:5000/library/postgres:14@sha256:abcdef", "postgres"),
+            ("nginx", "nginx"),
+            ("redis:7-alpine", "redis"),
+            ("gcr.io/proj/my-app:1.0", "my-app"),
+        ],
+    )
+    def test_image_repo_extraction(self, image, repo):
+        assert image_repo(image) == repo
+
+
+class TestSensitiveKeys:
+    @pytest.mark.parametrize(
+        "name, expected",
+        [
+            ("SECRET_KEY", True),
+            ("POSTGRES_PASSWORD", True),
+            ("DB_PASS", True),
+            ("API_TOKEN", True),
+            ("PUBLIC_KEY", False),
+            ("SSH_PUBLIC_KEY", False),
+            ("KEYCLOAK_PUBLIC_KEY", False),
+            ("KEYSTORE_PASS", True),  # exclusion never cancels a real secret keyword
+            ("PGPASSWORD", True),  # suffix match, no separator
+            ("PASSIVE_MODE", False),  # PASS only as a prefix of an unrelated word
+        ],
+    )
+    def test_is_sensitive_key(self, name, expected):
+        assert is_sensitive_key(name) is expected
+
+    def test_extra_sensitive_overrides_exclusion(self):
+        assert is_sensitive_key("PUBLIC_KEY") is False
+        assert is_sensitive_key("PUBLIC_KEY", extra=["public_key"]) is True
+
+    def test_detect_sensitive_env_with_extra(self):
+        normal, sensitive = detect_sensitive_env(
+            {"SITE_KEY": "pub-id", "OTHER": "1"}, extra_sensitive=["SITE_KEY"]
+        )
+        assert sensitive == {"SITE_KEY": "<secret-from-values>"}
+        assert normal == {"OTHER": "1"}
+
+
+class TestNormalizeLabels:
+    def test_list_form(self):
+        assert normalize_labels(["a=b", "c=d"]) == {"a": "b", "c": "d"}
+
+    def test_map_form(self):
+        assert normalize_labels({"a": "b"}) == {"a": "b"}
+
+    def test_flavor_from_list_labels(self):
+        assert detect_flavor({"labels": ["helmgen.flavor=payara"]}) == "payara"
 
 
 class TestDetectIngress:
@@ -100,12 +189,106 @@ class TestDetectIngress:
         svc = {"ports": ["8080:80"], "labels": {}}
         assert "kubernetes.io/ingress.class" not in str(detect_ingress(svc))
 
+    def test_multi_host_v3_rule(self):
+        svc = {
+            "ports": ["80"],
+            "labels": {"traefik.http.routers.app.rule": "Host(`a.com`, `b.com`)"},
+        }
+        ingress = detect_ingress(svc)
+        assert [r["host"] for r in ingress["rules"]] == ["a.com", "b.com"]
+        assert ingress["rules"][0]["port"] == 80
+
+    def test_multi_host_v1_comma(self):
+        svc = {"ports": [], "labels": {"rule": "Host:a.com,b.com"}}
+        ingress = detect_ingress(svc)
+        assert [r["host"] for r in ingress["rules"]] == ["a.com", "b.com"]
+
+    def test_path_rule_becomes_rule_path(self):
+        svc = {
+            "ports": ["80"],
+            "labels": {"traefik.http.routers.api.rule": "Host(`api.com`) && PathPrefix(`/v2`)"},
+        }
+        ingress = detect_ingress(svc)
+        assert ingress["rules"][0]["path"] == "/v2"
+
+    def test_tls_label_true_and_false(self):
+        svc = {
+            "ports": ["80"],
+            "labels": {
+                "traefik.http.routers.app.rule": "Host(`app.com`)",
+                "traefik.http.routers.app.tls": "true",
+            },
+        }
+        assert "tls" in detect_ingress(svc)
+        svc["labels"]["traefik.http.routers.app.tls"] = "false"
+        assert "tls" not in detect_ingress(svc)
+
+    def test_tls_substring_label_does_not_enable(self):
+        svc = {
+            "ports": ["80"],
+            "labels": {
+                "traefik.enable": "true",
+                "traefik.http.routers.app.rule": "Host(`app.com`)",
+                "traefik.docker.network": "example-tls-backend",
+            },
+        }
+        assert "tls" not in detect_ingress(svc)
+
+    def test_tls_certresolver_label_enables(self):
+        svc = {
+            "ports": ["80"],
+            "labels": {"traefik.http.routers.app.rule": "Host(`app.com`)",
+                       "traefik.http.routers.app.tls.certresolver": "le"},
+        }
+        assert "tls" in detect_ingress(svc)
+
+    def test_hyphenated_hostname_does_not_enable_tls(self):
+        svc = {"ports": ["80"], "labels": {"rule": "Host(`foo-tls.example.com`)"}}
+        ingress = detect_ingress(svc)
+        assert ingress["rules"][0]["host"] == "foo-tls.example.com"
+        assert "tls" not in ingress
+
+    def test_tls_token_in_rule_enables(self):
+        svc = {"ports": ["80"], "labels": {"traefik.http.routers.app.rule":
+                                           "Host(`app.com`) && PathPrefix(`/`) && tls"}}
+        assert "tls" in detect_ingress(svc)
+
+    def test_https_entrypoint_router_enables_tls(self):
+        svc = {"ports": ["80"], "labels": {"traefik.https.routers.app.rule": "Host(`app.com`)"}}
+        assert "tls" in detect_ingress(svc)
+
+    def test_ingress_port_is_container_not_published(self):
+        svc = {"ports": ["1234:80"], "labels": {}}
+        assert detect_ingress(svc)["rules"][0]["port"] == 80
+
+    def test_base_domain_no_labels(self):
+        svc = {"ports": ["8080"], "labels": {}}
+        ingress = detect_ingress(svc, base_domain="app.example.com")
+        assert ingress["rules"] == [{"host": "app.example.com", "path": "/", "port": 8080}]
+        assert "tls" in ingress  # base domain implies HTTPS
+
+    def test_base_domain_skips_non_web_ports(self):
+        # databases and exporters must not be published through the gateway
+        assert detect_ingress({"ports": ["5432"], "labels": {}},
+                              base_domain="app.example.com") is None
+        assert detect_ingress({"ports": [], "labels": {}},
+                              base_domain="app.example.com") is None
+
+    def test_base_domain_does_not_override_labels(self):
+        svc = {"ports": ["80"], "labels": {"rule": "Host(`real.example.org`)"}}
+        ingress = detect_ingress(svc, base_domain="app.example.com")
+        assert ingress["rules"][0]["host"] == "real.example.org"
+
+    def test_no_base_domain_no_ports_no_ingress(self):
+        assert detect_ingress({"ports": [], "labels": {}}, base_domain=None) is None
+
 
 class TestGenerateChart:
     def generate(self, tmp_path, services, **kwargs):
         compose = write_compose(tmp_path, services)
         out = tmp_path / "chart"
-        opts = dict(secret_provider="internal", store_scope="namespace", reuse_store=None)
+        opts = dict(secret_provider="internal", store_scope="namespace", reuse_store=None,
+                    base_domain=None, sensitive_env=None)
         opts.update(kwargs)
         generate_helm_chart(compose_path=compose, output_dir=out, **opts)
         values = yaml.safe_load((out / "values.yaml").read_text())
@@ -221,6 +404,101 @@ class TestGenerateChart:
         )
         assert values["services"]["web"]["ingress"]["className"] == "traefik"
 
+    def test_env_file_merged_with_inline_precedence(self, tmp_path):
+        envf = tmp_path / ".env"
+        envf.write_text(
+            "# comment\nFOO=from_env\nDB_PASSWORD='s3cret'\nexport BAR=baz\nMALFORMED\n"
+        )
+        _, values = self.generate(
+            tmp_path,
+            {"web": {"image": "nginx", "env_file": ".env", "environment": {"FOO": "inline"}}},
+        )
+        web = values["services"]["web"]
+        assert web["env"] == {"FOO": "inline", "BAR": "baz"}
+        assert web["secrets"] == {"DB_PASSWORD": "<secret-from-values>"}
+
+    def test_env_file_map_form_missing_optional_ok(self, tmp_path):
+        _, values = self.generate(
+            tmp_path,
+            {"web": {"image": "nginx", "env_file": [{"path": "absent.env", "required": False}]}},
+        )
+        assert values["services"]["web"]["env"] == {}
+
+    def test_env_file_list_of_files_later_wins(self, tmp_path):
+        (tmp_path / "a.env").write_text("X=1\nY=1")
+        (tmp_path / "b.env").write_text("X=2")
+        _, values = self.generate(
+            tmp_path, {"web": {"image": "nginx", "env_file": ["a.env", "b.env"]}}
+        )
+        assert values["services"]["web"]["env"] == {"X": "2", "Y": "1"}
+
+    def test_long_syntax_ports_normalized(self, tmp_path):
+        _, values = self.generate(
+            tmp_path,
+            {"web": {"image": "nginx", "ports": [{"target": 8080, "published": "80",
+                                                  "protocol": "udp"}]}},
+        )
+        assert values["services"]["web"]["ports"] == [
+            {"containerPort": 8080, "published": 80, "protocol": "UDP"}
+        ]
+
+    def test_build_only_gets_placeholder_image(self, tmp_path):
+        _, values = self.generate(
+            tmp_path, {"api": {"build": {"context": "./api"}, "ports": ["8000"]}}
+        )
+        assert values["services"]["api"]["image"] == "api:local"
+
+    def test_configs_and_secrets_do_not_crash(self, tmp_path, capsys):
+        compose = tmp_path / "docker-compose.yml"
+        compose.write_text(yaml.safe_dump({
+            "services": {"web": {"image": "nginx",
+                                 "configs": [{"source": "cfg", "target": "/x"}]}},
+            "configs": {"cfg": {"file": "./cfg.txt"}},
+        }))
+        out = tmp_path / "chart"
+        generate_helm_chart(
+            compose_path=compose, output_dir=out,
+            secret_provider="internal", store_scope="namespace", reuse_store=None,
+        )
+        err = capsys.readouterr().err
+        assert "configs" in err and "secrets" not in err  # only configs warning here
+        values = yaml.safe_load((out / "values.yaml").read_text())
+        assert values["services"]["web"]["image"] == "nginx"
+
+    def test_base_domain_flows_into_values(self, tmp_path):
+        _, values = self.generate(
+            tmp_path,
+            {"web": {"image": "nginx", "ports": ["8080"]}},
+            base_domain="web.example.com",
+        )
+        assert values["services"]["web"]["ingress"]["rules"][0]["host"] == "web.example.com"
+
+    def test_sensitive_env_flag_flows_into_values(self, tmp_path):
+        _, values = self.generate(
+            tmp_path,
+            {"web": {"image": "nginx", "environment": {"PUBLIC_KEY": "ssh-rsa AAAA"}}},
+            sensitive_env="PUBLIC_KEY",
+        )
+        assert values["services"]["web"]["secrets"] == {"PUBLIC_KEY": "<secret-from-values>"}
+
+    def test_exec_healthcheck_maps_readiness_only_in_values(self, tmp_path):
+        _, values = self.generate(
+            tmp_path,
+            {"db": {"image": "postgres:14",
+                    "healthcheck": {"test": ["CMD-SHELL", "pg_isready -U app"]}}},
+        )
+        db = values["services"]["db"]
+        assert "readinessProbe" in db
+        assert "livenessProbe" not in db
+
+    def test_labels_list_form_ingress_host(self, tmp_path):
+        _, values = self.generate(
+            tmp_path,
+            {"web": {"image": "nginx", "ports": ["80"],
+                     "labels": ["traefik.http.routers.web.rule=Host(`w.com`)"]}},
+        )
+        assert values["services"]["web"]["ingress"]["rules"][0]["host"] == "w.com"
+
 
 class TestComposeResources:
     def test_cpus_converted_to_millicores(self):
@@ -293,9 +571,11 @@ class TestDetectProbes:
         assert detect_probes({"healthcheck": {"disable": True, "test": "curl x"}}) is None
         assert detect_probes({}) is None
 
-    def test_start_period_maps_to_initial_delay(self):
+    def test_start_period_excluded_from_base_probe(self):
+        # start_period no longer delays liveness; see TestMapHealthcheck
         svc = {"healthcheck": {"test": "curl http://localhost/h", "start_period": "10s"}}
-        assert detect_probes(svc)["initialDelaySeconds"] == 10
+        probe = detect_probes(svc)
+        assert "initialDelaySeconds" not in probe
 
     @pytest.mark.parametrize(
         "raw, seconds",
@@ -303,6 +583,41 @@ class TestDetectProbes:
     )
     def test_duration_parsing(self, raw, seconds):
         assert parse_compose_duration(raw) == seconds
+
+
+class TestMapHealthcheck:
+    def test_http_probe_maps_to_both(self):
+        svc = {"healthcheck": {"test": "curl -f http://localhost:8080/healthz"}}
+        probes = map_healthcheck(svc)
+        assert probes["livenessProbe"]["httpGet"] == {"path": "/healthz", "port": 8080}
+        assert probes["readinessProbe"] == probes["livenessProbe"]
+        assert "startupProbe" not in probes
+
+    def test_exec_probe_maps_to_readiness_only(self):
+        svc = {"healthcheck": {"test": ["CMD", "pg_isready", "-U", "user"]}}
+        probes = map_healthcheck(svc)
+        assert probes == {
+            "readinessProbe": {"exec": {"command": ["pg_isready", "-U", "user"]}}
+        }
+
+    def test_start_period_becomes_startup_probe(self):
+        svc = {"healthcheck": {"test": "curl http://localhost/h", "start_period": "30s"}}
+        probes = map_healthcheck(svc)
+        startup = probes["startupProbe"]
+        assert startup["initialDelaySeconds"] == 30
+        assert startup["failureThreshold"] == 120
+        assert "initialDelaySeconds" not in probes["livenessProbe"]
+
+    def test_disabled_returns_empty(self):
+        assert map_healthcheck({"healthcheck": {"disable": True, "test": "curl x"}}) == {}
+        assert map_healthcheck({}) == {}
+
+
+def test_parse_env_file_warns_malformed(tmp_path, capsys):
+    f = tmp_path / "e.env"
+    f.write_text('A=1\nB = "quoted" \nnoequals\n')
+    assert parse_env_file(f) == {"A": "1", "B": "quoted"}
+    assert "malformed" in capsys.readouterr().err
 
 
 class TestValuesOverlay:

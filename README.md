@@ -7,14 +7,15 @@ Auto-generate Helm charts from Docker Compose files.
 ## Features
 
 - Convert **Docker Compose** files directly into **Helm charts**
-- Auto-detect **databases** (postgres, mysql, mariadb, mongodb, redis) → StatefulSet + PVC with real volume mount paths
+- Auto-detect **databases** (postgres, mysql, mariadb, mongo, redis) by image repository name → StatefulSet + PVC with real volume mount paths
 - Auto-generate **Kubernetes Secrets** or **ExternalSecrets** (External Secrets Operator)
 - Generate **SecretStore** or **ClusterSecretStore**, or reuse an existing one
-- Auto-detect **Ingress** from exposed web ports (80/443/8080) and Traefik-style `Host(...)` labels
+- Auto-detect **Ingress** from exposed web ports (80/443/8080) and Traefik v1/v2/v3 rules (`Host(...)`/`Host:`, `Path(...)`, `…routers.x.tls*`)
+- Maps compose `environment`, **`env_file`** (both legacy and `{path, required}` forms), `replicas`, `command`/`args`, `deploy.resources`, `depends_on`/`networks`, and both short and long **`ports`** syntax into the chart
 - Replace hardcoded secrets with safe placeholders in `values.yaml`
 - Sensible storage size defaults per database type
 - **Workload flavors** (`--flavor`): presets for **Spring Boot** (Actuator probes, startup probe, JVM memory) and **Payara** (MicroProfile `/health/*`, startup probe, admin port protection) with auto-detection
-- Maps compose `replicas`, `command`/`args`, `deploy.resources`, `healthcheck` (→ liveness/readiness probes), and `depends_on`/`networks` into the chart
+- Maps compose `healthcheck` to probes: HTTP checks become liveness **and** readiness, `exec` checks become **readiness only**, `start_period` becomes a **startupProbe**
 - Optional wait-for initContainers (`waitOnDependencies: true`) to gate startup on dependency Services
 - Default CPU/memory `resources` on all containers, overridable per service in `values.yaml`
 - Optional HTTP liveness/readiness probes via `probePath`/`probePort` in `values.yaml`
@@ -47,6 +48,8 @@ helmgen docker-compose.yml [options]
 | `--store-scope`         | `namespace` or `cluster` SecretStore            | `namespace`         |
 | `--reuse-store`         | Name of existing SecretStore/ClusterSecretStore | *None*              |
 | `--ingress-class`       | `ingressClassName` for generated Ingress        | `nginx`             |
+| `--base-domain`         | Host for Ingress rules of port-exposing services without a `Host` label (implies TLS) | *None* |
+| `--sensitive-env`       | Comma-separated env var names forced into Secrets even if heuristics miss them | *None* |
 | `--values-overlay`      | YAML file deep-merged into generated values     | *None*              |
 | `--flavor, -f`          | Template flavor (`generic`, `spring-boot`, `payara`) | `generic`      |
 | `--chart-version`       | Chart version in `Chart.yaml`                   | `0.1.0`             |
@@ -149,7 +152,7 @@ services:
         memory: 1Gi
 ```
 
-> **Note**: Explicit compose configurations always take precedence. If a service defines its own `healthcheck` in compose, that check is mapped to `livenessProbe` and `readinessProbe` while preserving the generated `startupProbe`. Likewise, any `deploy.resources` defined in compose overrides flavor resource defaults.
+> **Note**: Explicit compose configurations always take precedence. If a service defines its own `healthcheck` in compose, that check is used instead of the flavor probes (HTTP checks become liveness + readiness, `exec` checks become readiness only) while the generated `startupProbe` is preserved. Likewise, any `deploy.resources` defined in compose overrides flavor resource defaults.
 
 ### Example
 
@@ -243,6 +246,31 @@ Deploy:
 ```bash
 helm install myapp ./charts/myapp
 ```
+
+## Detection heuristics and their limits
+
+HelmGen infers Kubernetes constructs from compose with heuristics. These are the
+rules, and how to correct them when a heuristic guesses wrong — every inference
+can be overridden in `values.yaml` or, better, in a `--values-overlay` so the
+fix survives regeneration.
+
+| Inference | Rule | Override |
+| --- | --- | --- |
+| Database → StatefulSet + PVC | The image **repository name** (last path segment, without tag/digest) is one of `postgres`, `postgresql`, `mysql`, `mariadb`, `mongo`, `mongodb`, `redis`. Sidecars such as `prometheuscommunity/postgres-exporter` are *not* treated as databases. | set/clear `storage` per service |
+| Secret env vars | The name, split into `_`/`-` tokens, contains `PASSWORD`, `PASS`, `SECRET`, `KEY`, `TOKEN` or `CREDENTIAL` as a token or token suffix (`PGPASSWORD` matches, `PASSIVE_MODE` does not). Names carrying `PUBLIC_KEY`, `PUBLICKEY`, `PUBKEY`, `KEYSTORE` or `TRUSTSTORE` are ignored unless another sensitive token remains, so `KEYCLOAK_PUBLIC_KEY` stays plain config while `KEYSTORE_PASS` is a Secret. | force with `--sensitive-env NAME,NAME` |
+| Traefik Ingress | `Host(...)` (v3, comma-separated and backtick-quoted hosts supported), `Host:` (v1/v2) and `Path`/`PathPrefix` rules produce one rule per host; TLS is enabled by `…routers.<name>.tls` labels (respecting `false`), a `tls` operand inside a rule, an `https` router, or a published `443`. Router-scoped labels only. | edit `ingress.rules` / `ingress.tls` |
+| Healthcheck → probes | `CMD`/`CMD-SHELL` tests containing an `http(s)://` URL become an `httpGet` probe on both liveness and readiness; `--interval/--timeout/--retries/--start_period` map to `periodSeconds`, `timeoutSeconds`, `failureThreshold` and a `startupProbe`. Any other test (e.g. `pg_isready`) becomes a **readinessProbe only**, because an exec check that reaches out to a dependency would restart the container whenever that dependency is down. | set `livenessProbe` / `readinessProbe` explicitly |
+| Ports | Short syntax (`8080:80/tcp`) and long syntax (`target`, `published`, `protocol`, `mode`) are normalized to `containerPort`/`published`/`protocol`. Host-only mappings with no `target` are skipped with a warning — publish those with `serviceType: LoadBalancer`/`NodePort` instead. | `serviceType` per service |
+| `env_file` | Parsed as plain `KEY=VALUE` (comments, `export ` prefix and surrounding quotes supported), relative to the compose file, later files winning. The inline `environment` block always wins. No shell interpolation of `${VAR}` is performed. | `env` per service |
+
+Not resolved, and reported as a warning on stderr so failures are not silent:
+
+- top-level **`configs`** and **`secrets`** — mount them via `volumes`, or deliver them as ExternalSecrets
+- **`extends`** — the merged service definition is not computed; verify the result manually
+- **`build`** without `image` — a placeholder `<service>:local` is written; build and push the image, then set the real reference
+
+Unsupported keys inside a recognized section (for example `devices`, `gpus`,
+`ulimits`) are ignored silently; open an issue if you need one mapped.
 
 ## Development
 
