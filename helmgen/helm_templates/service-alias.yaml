@@ -1,0 +1,18 @@
+{{- range $name, $svc := .Values.services }}
+{{- if and $.Values.serviceAliases $svc.alias $svc.ports }}
+{{- $labels := dict "root" $ "name" $name }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $svc.alias }}
+  labels:
+    {{- include "helmgen.labels" $labels | nindent 4 }}
+    helmgen.io/alias-for: {{ $.Release.Name }}-{{ $name }}
+spec:
+  selector:
+    {{- include "helmgen.selectorLabels" $labels | nindent 4 }}
+  ports:
+    {{- include "helmgen.servicePorts" (dict "name" $name "ports" $svc.ports) | nindent 4 }}
+---
+{{- end }}
+{{- end }}

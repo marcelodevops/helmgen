@@ -26,6 +26,7 @@ from helmgen.generator import (
     parse_compose_duration,
     parse_env_file,
     parse_port_string,
+    sanitize_service_name,
 )
 
 
@@ -153,12 +154,12 @@ class TestNormalizeLabels:
 
 class TestDetectIngress:
     def test_backtick_host_label(self):
-        svc = {"ports": [], "labels": {"rule": "Host(`web.example.com`)"}}
+        svc = {"ports": ["80"], "labels": {"rule": "Host(`web.example.com`)"}}
         ingress = detect_ingress(svc)
         assert ingress["rules"][0]["host"] == "web.example.com"
 
     def test_host_colon_label(self):
-        svc = {"ports": [], "labels": {"rule": "Host:api.example.com && PathPrefix:/api"}}
+        svc = {"ports": ["80"], "labels": {"rule": "Host:api.example.com && PathPrefix:/api"}}
         ingress = detect_ingress(svc)
         assert ingress["rules"][0]["host"] == "api.example.com"
 
@@ -198,7 +199,7 @@ class TestDetectIngress:
         assert ingress["rules"][0]["port"] == 80
 
     def test_multi_host_v1_comma(self):
-        svc = {"ports": [], "labels": {"rule": "Host:a.com,b.com"}}
+        svc = {"ports": ["80"], "labels": {"rule": "Host:a.com,b.com"}}
         ingress = detect_ingress(svc)
         assert [r["host"] for r in ingress["rules"]] == ["a.com", "b.com"]
 
@@ -295,6 +296,58 @@ class TestDetectIngress:
     def test_no_base_domain_no_ports_no_ingress(self):
         assert detect_ingress({"ports": [], "labels": {}}, base_domain=None) is None
 
+    def test_published_only_mapping_produces_no_rule(self):
+        # No container target means no Service is rendered, so no rule either.
+        svc = {"ports": [{"published": 8080, "mode": "hostgw"}],
+               "labels": {"rule": "Host(`app.com`)"}}
+        assert detect_ingress(svc) is None
+
+    def test_host_label_without_exposed_port_is_dropped(self):
+        svc = {"ports": [], "labels": {"rule": "Host(`app.com`)"}}
+        assert detect_ingress(svc) is None
+
+    def test_long_syntax_targets_the_container_port(self):
+        svc = {"labels": {"rule": "Host(`app.com`)"}}
+        ports = [{"containerPort": 8080, "published": 80}]
+        assert detect_ingress(svc, ports=ports)["rules"][0]["port"] == 8080
+
+    def test_precomputed_ports_win_over_raw_compose(self):
+        # generate_helm_chart passes the normalized list; ingress, Service and
+        # wait-for probes must all read the same values.
+        svc = {"ports": ["15432:5432"], "labels": {"rule": "Host(`app.com`)"}}
+        ingress = detect_ingress(svc, ports=[{"containerPort": 5432}])
+        assert ingress["rules"][0]["port"] == 5432
+
+    def test_web_port_preferred_when_host_has_no_port_hint(self):
+        svc = {"ports": ["15432:5432", "9090", "80"], "labels": {"rule": "Host(`app.com`)"}}
+        assert detect_ingress(svc)["rules"][0]["port"] == 80
+
+    def test_falls_back_to_first_port_without_web_port(self):
+        svc = {"ports": ["15432:5432", "9090"], "labels": {"rule": "Host(`app.com`)"}}
+        assert detect_ingress(svc)["rules"][0]["port"] == 5432
+
+
+class TestServiceNameSanitization:
+    @pytest.mark.parametrize(
+        "raw, expected",
+        [
+            ("db", "db"),
+            ("My_DB", "my-db"),
+            ("my.cache", "my-cache"),
+            ("1api", "1api"),  # DNS-1123 labels may start with a digit
+            ("-db-", "db"),
+            ("a__b", "a-b"),
+            ("MyCache", "mycache"),
+            ("x" * 70, "x" * 63),
+        ],
+    )
+    def test_sanitizes(self, raw, expected):
+        assert sanitize_service_name(raw) == expected
+
+    @pytest.mark.parametrize("raw", ["", "-", "___"])
+    def test_rejects_impossible_names(self, raw):
+        assert sanitize_service_name(raw) is None
+
 
 class TestGenerateChart:
     def generate(self, tmp_path, services, **kwargs):
@@ -330,6 +383,44 @@ class TestGenerateChart:
         )
         assert values["services"]["web"]["env"] == {"FOO": "bar"}
         assert values["services"]["web"]["secrets"] == {"TOKEN": "<secret-from-values>"}
+
+    def test_service_names_are_dns_labels(self, tmp_path):
+        _, values = self.generate(
+            tmp_path, {"MyCache": {"image": "redis:7", "ports": ["6379"]}}
+        )
+        assert list(values["services"]) == ["mycache"]
+        assert values["services"]["mycache"]["image"] == "redis:7"
+
+    def test_service_name_collision_fails(self, tmp_path):
+        with pytest.raises(ValueError, match="collide"):
+            self.generate(
+                tmp_path, {"web": {"image": "nginx"}, "WEB": {"image": "nginx:1.25"}}
+            )
+
+    def test_unnormalizable_service_name_fails(self, tmp_path):
+        with pytest.raises(ValueError, match="cannot be normalized"):
+            self.generate(tmp_path, {"---": {"image": "nginx"}})
+
+    def test_depends_on_uses_chart_keys(self, tmp_path):
+        _, values = self.generate(
+            tmp_path,
+            {"MyDB": {"image": "postgres:14"}, "App": {"image": "nginx", "depends_on": ["MyDB"]}},
+        )
+        assert values["services"]["app"]["dependsOn"] == ["mydb"]
+
+    def test_service_aliases_off_by_default(self, tmp_path):
+        _, values = self.generate(tmp_path, {"db": {"image": "postgres:14", "ports": ["5432"]}})
+        assert values["serviceAliases"] is False
+        assert "alias" not in values["services"]["db"]
+
+    def test_service_aliases_written_when_requested(self, tmp_path):
+        _, values = self.generate(
+            tmp_path,
+            {"My_DB": {"image": "postgres:14", "ports": ["5432"]}},
+            service_aliases=True,
+        )
+        assert values["serviceAliases"] is True
+        assert values["services"]["my-db"]["alias"] == "my-db"
 
     def test_database_gets_storage_and_mount_paths(self, tmp_path):
         out, values = self.generate(

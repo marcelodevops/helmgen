@@ -8,7 +8,7 @@ metadata:
   labels:
     {{- include "helmgen.labels" $labels | nindent 4 }}
 spec:
-  serviceName: {{ $.Release.Name }}-{{ $name }}
+  serviceName: {{ $.Release.Name }}-{{ $name }}{{ if $svc.ports }}-headless{{ end }}
   replicas: {{ $svc.replicas | default 1 }}
   selector:
     matchLabels:

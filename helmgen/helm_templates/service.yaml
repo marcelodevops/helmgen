@@ -9,14 +9,9 @@ metadata:
     {{- include "helmgen.labels" $labels | nindent 4 }}
 spec:
   selector:
-    app: {{ $.Release.Name }}-{{ $name }}
+    {{- include "helmgen.selectorLabels" $labels | nindent 4 }}
   ports:
-    {{- range $svc.ports }}
-    - port: {{ .published | default .target | default .containerPort }}
-      targetPort: {{ .target | default .containerPort }}
-      protocol: {{ .protocol | default "TCP" }}
-      name: {{ $name }}-{{ .containerPort }}
-    {{- end }}
+    {{- include "helmgen.servicePorts" (dict "name" $name "ports" $svc.ports) | nindent 4 }}
   type: {{ $svc.serviceType | default "ClusterIP" }}
 ---
 {{- end }}

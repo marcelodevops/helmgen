@@ -17,6 +17,9 @@ Auto-generate Helm charts from Docker Compose files.
 - Sensible storage size defaults per database type
 - **Workload flavors** (`--flavor`): presets for **Spring Boot** (Actuator probes, startup probe, JVM memory) and **Payara** (MicroProfile `/health/*`, startup probe, admin port protection) with auto-detection
 - Maps compose `healthcheck` to probes: HTTP checks become liveness **and** readiness, `exec` checks become **readiness only**, `start_period` becomes a **startupProbe**
+- Services listen on the **container port** (the compose `published` host port is informational), so Ingress backends and wait-for probes always hit a port the Service actually serves; port names are truncated to stay RFC 6335-valid
+- StatefulSets are governed by a **headless Service** (`clusterIP: None`) for stable pod DNS
+- `--service-aliases` additionally exposes each service under its bare compose name, so legacy env values like `postgresql://…@db:5432` resolve
 - Optional wait-for initContainers (`waitOnDependencies: true`) to gate startup on dependency Services
 - Default CPU/memory `resources` on all containers, overridable per service in `values.yaml`
 - Optional HTTP liveness/readiness probes via `probePath`/`probePort` in `values.yaml`
@@ -51,6 +54,7 @@ helmgen docker-compose.yml [options]
 | `--ingress-class`       | `ingressClassName` for generated Ingress        | `nginx`             |
 | `--base-domain`         | Host for Ingress rules of port-exposing services without a `Host` label (implies TLS) | *None* |
 | `--sensitive-env`       | Comma-separated env var names forced into Secrets even if heuristics miss them | *None* |
+| `--service-aliases`     | Also expose each service under its bare compose name (e.g. Service `db`) so legacy `host:port` references resolve | *off* |
 | `--values-overlay`      | YAML file deep-merged into generated values     | *None*              |
 | `--flavor, -f`          | Template flavor (`generic`, `spring-boot`, `payara`) | `generic`      |
 | `--chart-version`       | Chart version in `Chart.yaml`                   | `0.1.0`             |
@@ -226,6 +230,8 @@ charts/myapp/
     ├── deployment.yaml       # non-database services
     ├── statefulset.yaml      # database services (storage: true)
     ├── service.yaml
+    ├── service-headless.yaml # clusterIP: None, governs each StatefulSet
+    ├── service-alias.yaml    # rendered only with --service-aliases
     ├── pvc.yaml               # legacy storagePaths support
     ├── ingress.yaml
     ├── secrets.yaml          # rendered only when secretProvider=internal
@@ -278,9 +284,10 @@ fix survives regeneration.
 | --- | --- | --- |
 | Database → StatefulSet | The image **repository name** (last path segment, without tag/digest) is one of `postgres`, `postgresql`, `mysql`, `mariadb`, `mongo`, `mongodb`, `redis`. Sidecars such as `prometheuscommunity/postgres-exporter` are *not* treated as databases. Named Compose volumes create per-pod claims; bind mounts are warned about and skipped. | set/clear `storage` per service; use named Compose volumes for persistence |
 | Secret env vars | The name, split into `_`/`-` tokens, contains `PASSWORD`, `PASS`, `SECRET`, `KEY`, `TOKEN` or `CREDENTIAL` as a token or token suffix (`PGPASSWORD` matches, `PASSIVE_MODE` does not). Names carrying `PUBLIC_KEY`, `PUBLICKEY`, `PUBKEY`, `KEYSTORE` or `TRUSTSTORE` are ignored unless another sensitive token remains, so `KEYCLOAK_PUBLIC_KEY` stays plain config while `KEYSTORE_PASS` is a Secret. | force with `--sensitive-env NAME,NAME` |
-| Traefik Ingress | `Host(...)` (v3, comma-separated and backtick-quoted hosts supported), `Host:` (v1/v2) and `Path`/`PathPrefix` rules produce one rule per host; TLS is enabled by `…routers.<name>.tls` labels (respecting `false`), a `tls` operand inside a rule, an `https` router, or a published `443`. Router-scoped labels only. | edit `ingress.rules` / `ingress.tls` |
+| Traefik Ingress | `Host(...)` (v3, comma-separated and backtick-quoted hosts supported), `Host:` (v1/v2) and `Path`/`PathPrefix` rules produce one rule per host; TLS is enabled by `…routers.<name>.tls` labels (respecting `false`), a `tls` operand inside a rule, an `https` router, or a container port `443`. Router-scoped labels only. | edit `ingress.rules` / `ingress.tls` |
 | Healthcheck → probes | `CMD`/`CMD-SHELL` tests containing an `http(s)://` URL become an `httpGet` probe on both liveness and readiness; `--interval/--timeout/--retries/--start_period` map to `periodSeconds`, `timeoutSeconds`, `failureThreshold` and a `startupProbe`. Any other test (e.g. `pg_isready`) becomes a **readinessProbe only**, because an exec check that reaches out to a dependency would restart the container whenever that dependency is down. | set `livenessProbe` / `readinessProbe` explicitly |
-| Ports | Short syntax (`8080:80/tcp`) and long syntax (`target`, `published`, `protocol`, `mode`) are normalized to `containerPort`/`published`/`protocol`. Host-only mappings with no `target` are skipped with a warning — publish those with `serviceType: LoadBalancer`/`NodePort` instead. | `serviceType` per service |
+| Ports | Short syntax (`8080:80/tcp`) and long syntax (`target`, `published`, `protocol`, `mode`) are normalized to `containerPort`/`published`/`protocol`. The Service listens on `containerPort` and both Ingress backends and wait-for probes target that same port, so `published` is informational only — to request host-visible traffic choose `serviceType: LoadBalancer`/`NodePort`. Mappings with no container `target` are skipped with a warning. Port names are the first 8 characters of the service name plus the port and protocol letter, kept within RFC 6335's 15-character limit. | `serviceType` per service |
+| Service naming | Compose service names are lowercased and runs of other characters collapsed to `-` to form Kubernetes object names (`My_DB` → `my-db`); two services colliding on one name abort generation. A service with `storage` also gets a `<release>-<name>-headless` Service (`clusterIP: None`) which the StatefulSet points `serviceName` at. With `--service-aliases`, each service is additionally exposed under its bare normalized name (`db`), labeled `helmgen.io/alias-for: <release>-db`. | `serviceAliases` globally; `alias` per service to rename it or drop it |
 | `env_file` | Parsed as plain `KEY=VALUE` (comments, `export ` prefix and surrounding quotes supported), relative to the compose file, later files winning. The inline `environment` block always wins. No shell interpolation of `${VAR}` is performed. | `env` per service |
 | Compose `networks` | Network names do not create Kubernetes network isolation and are not copied into chart values. HelmGen warns when it encounters them. | configure Kubernetes NetworkPolicies separately |
 
