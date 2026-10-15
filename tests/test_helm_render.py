@@ -253,7 +253,11 @@ services:
 
 @pytest.fixture
 def net_compose(tmp_path):
-    """Ports where host and container port differ, plus a tcp/udp pair on one port."""
+    """Ports where host and container port differ, plus a tcp/udp pair on one port.
+
+    ``1api`` is legal in Compose and stays ``1api`` as a Kubernetes object name,
+    but a port name may not start with a digit, so it needs the helper's prefix.
+    """
     compose = tmp_path / "docker-compose.yml"
     compose.write_text(
         """
@@ -269,6 +273,9 @@ services:
     image: postgres:14
     ports: ["15432:5432"]
     volumes: ["db-data:/var/lib/postgresql/data"]
+  1api:
+    image: nginx:alpine
+    ports: ["8888:80"]
   worker:
     image: python:3.12-slim
 """
@@ -295,6 +302,7 @@ def test_service_port_names_are_rfc6335_valid(tmp_path, net_compose):
             assert pattern.match(port_name), f"{name} port name {port_name!r} is invalid"
         protocols = [(p["port"], p["protocol"]) for p in svc["spec"]["ports"]]
         assert len(protocols) == len(set(protocols)), f"{name} has duplicate ports"
+    assert services_by_name(output)["test-1api"]["spec"]["ports"][0]["name"] == "s1api-80-t"
 
 
 def test_service_ports_are_container_ports_not_published(tmp_path, net_compose):
