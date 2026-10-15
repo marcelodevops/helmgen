@@ -8,7 +8,6 @@ from helmgen.generator import (
     DEFAULT_RESOURCES,
     FLAVOR_RESOURCES,
     SUPPORTED_FLAVORS,
-    apply_flavor,
     compose_resources_to_k8s,
     deep_merge,
     detect_flavor,
