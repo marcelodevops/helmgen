@@ -210,6 +210,20 @@ class TestDetectIngress:
         ingress = detect_ingress(svc)
         assert ingress["rules"][0]["path"] == "/v2"
 
+    def test_every_path_rule_becomes_an_ingress_path(self):
+        svc = {
+            "ports": ["80"],
+            "labels": {
+                "traefik.http.routers.api.rule":
+                    "Host(`api.com`) && (PathPrefix(`/v2`) || Path(`/health`))"
+            },
+        }
+        ingress = detect_ingress(svc)
+        assert ingress["rules"] == [
+            {"host": "api.com", "path": "/v2", "port": 80},
+            {"host": "api.com", "path": "/health", "port": 80},
+        ]
+
     def test_tls_label_true_and_false(self):
         svc = {
             "ports": ["80"],
@@ -330,8 +344,62 @@ class TestGenerateChart:
         db = values["services"]["db"]
         assert db["storage"] is True
         assert db["storageSize"] == "5Gi"
-        assert db["storagePaths"] == ["/var/lib/postgresql/data"]
+        assert db["storageVolumes"] == [
+            {
+                "name": "volume-db-data",
+                "mountPath": "/var/lib/postgresql/data",
+                "size": "5Gi",
+                "readOnly": False,
+            }
+        ]
         assert (out / "templates" / "statefulset.yaml").exists()
+
+    def test_named_volumes_get_separate_persistent_volume_claims(self, tmp_path):
+        _, values = self.generate(
+            tmp_path,
+            {
+                "app": {
+                    "image": "nginx",
+                    "replicas": 3,
+                    "volumes": [
+                        "content:/usr/share/nginx/html",
+                        "config:/etc/nginx/conf.d:ro",
+                    ],
+                }
+            },
+        )
+        app = values["services"]["app"]
+        assert app["replicas"] == 3
+        assert app["storageVolumes"] == [
+            {
+                "name": "volume-content",
+                "mountPath": "/usr/share/nginx/html",
+                "size": "1Gi",
+                "readOnly": False,
+            },
+            {
+                "name": "volume-config",
+                "mountPath": "/etc/nginx/conf.d",
+                "size": "1Gi",
+                "readOnly": True,
+            },
+        ]
+
+    def test_host_bind_mounts_are_warned_and_not_treated_as_pvcs(self, tmp_path, capsys):
+        _, values = self.generate(
+            tmp_path,
+            {"app": {"image": "nginx", "volumes": ["./config:/etc/nginx/conf.d:ro"]}},
+        )
+        assert "storageVolumes" not in values["services"]["app"]
+        assert "storagePaths" not in values["services"]["app"]
+        assert "bind mount" in capsys.readouterr().err.lower()
+
+    def test_compose_networks_are_warned_not_mapped(self, tmp_path, capsys):
+        _, values = self.generate(
+            tmp_path, {"app": {"image": "nginx", "networks": ["frontend"]}}
+        )
+        assert "networks" not in values["services"]["app"]
+        assert "network" in capsys.readouterr().err.lower()
 
     def test_protocol_suffix_port_does_not_crash(self, tmp_path):
         _, values = self.generate(
@@ -535,8 +603,55 @@ class TestTopologyNormalization:
             },
         )
         assert values["services"]["web"]["dependsOn"] == ["db"]
-        assert values["services"]["web"]["networks"] == ["frontend"]
+        assert "networks" not in values["services"]["web"]
         assert values["waitOnDependencies"] is False
+
+    def test_shared_storage_paths_reject_multiple_replicas(self, tmp_path):
+        compose = write_compose(tmp_path, {"db": {"image": "postgres:14"}})
+        overlay = tmp_path / "overlay.yml"
+        overlay.write_text(
+            "services:\n  db:\n    replicas: 2\n    storage: true\n"
+            "    storagePaths: [/var/lib/postgresql/data]\n"
+        )
+        with pytest.raises(ValueError, match="per-replica persistent volumes"):
+            generate_helm_chart(
+                compose_path=compose,
+                output_dir=tmp_path / "chart",
+                secret_provider="internal",
+                store_scope="namespace",
+                reuse_store=None,
+                values_overlay=str(overlay),
+            )
+
+    def test_external_secret_store_values_are_configurable(self, tmp_path):
+        compose = write_compose(tmp_path, {"app": {"image": "nginx"}})
+        overlay = tmp_path / "overlay.yml"
+        overlay.write_text(
+            "vault:\n"
+            "  server: https://vault.example.org\n"
+            "  path: apps/\n"
+            "  version: v1\n"
+            "  auth:\n"
+            "    tokenSecretRef:\n"
+            "      name: custom-vault-token\n"
+            "      key: api-token\n"
+        )
+        out = tmp_path / "chart"
+        generate_helm_chart(
+            compose_path=compose,
+            output_dir=out,
+            secret_provider="externalsecret",
+            store_scope="namespace",
+            reuse_store=None,
+            values_overlay=str(overlay),
+        )
+        values = yaml.safe_load((out / "values.yaml").read_text())
+        assert values["vault"] == {
+            "server": "https://vault.example.org",
+            "path": "apps/",
+            "version": "v1",
+            "auth": {"tokenSecretRef": {"name": "custom-vault-token", "key": "api-token"}},
+        }
 
 
 class TestDetectProbes:
@@ -853,7 +968,6 @@ class TestChartMetadata:
         assert chart_yaml["version"] == "0.5.0"
         assert chart_yaml["appVersion"] == "3.0.1"
         assert chart_yaml["name"] == "awesome-app"
-
 
 
 

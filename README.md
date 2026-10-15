@@ -7,11 +7,12 @@ Auto-generate Helm charts from Docker Compose files.
 ## Features
 
 - Convert **Docker Compose** files directly into **Helm charts**
-- Auto-detect **databases** (postgres, mysql, mariadb, mongo, redis) by image repository name → StatefulSet + PVC with real volume mount paths
+- Auto-detect **databases** (postgres, mysql, mariadb, mongo, redis) by image repository name → StatefulSet; named Compose volumes become per-replica PVCs
 - Auto-generate **Kubernetes Secrets** or **ExternalSecrets** (External Secrets Operator)
 - Generate **SecretStore** or **ClusterSecretStore**, or reuse an existing one
 - Auto-detect **Ingress** from exposed web ports (80/443/8080) and Traefik v1/v2/v3 rules (`Host(...)`/`Host:`, `Path(...)`, `…routers.x.tls*`)
-- Maps compose `environment`, **`env_file`** (both legacy and `{path, required}` forms), `replicas`, `command`/`args`, `deploy.resources`, `depends_on`/`networks`, and both short and long **`ports`** syntax into the chart
+- Maps compose `environment`, **`env_file`** (both legacy and `{path, required}` forms), `replicas`, `command`/`args`, `deploy.resources`, `depends_on`, and both short and long **`ports`** syntax into the chart
+- Converts named Compose volumes into per-replica StatefulSet claims; warns and skips host bind mounts that cannot be represented portably
 - Replace hardcoded secrets with safe placeholders in `values.yaml`
 - Sensible storage size defaults per database type
 - **Workload flavors** (`--flavor`): presets for **Spring Boot** (Actuator probes, startup probe, JVM memory) and **Payara** (MicroProfile `/health/*`, startup probe, admin port protection) with auto-detection
@@ -195,6 +196,25 @@ helmgen docker-compose.yml \
   --reuse-store global-vault-store
 ```
 
+When generating a Vault SecretStore instead of reusing one, configure its
+connection and token Secret reference in a values overlay before deployment:
+
+```yaml
+vault:
+  server: https://vault.example.org
+  path: secret/
+  version: v2
+  auth:
+    tokenSecretRef:
+      name: vault-auth
+      key: token
+```
+
+The generated defaults are placeholders and HelmGen prints a warning until
+you provide your Vault settings. Compose `networks` are not enforced by the
+generated Kubernetes resources; HelmGen warns when they are present. Configure
+NetworkPolicies separately if network isolation is required.
+
 Output:
 
 ```
@@ -206,7 +226,7 @@ charts/myapp/
     ├── deployment.yaml       # non-database services
     ├── statefulset.yaml      # database services (storage: true)
     ├── service.yaml
-    ├── pvc.yaml
+    ├── pvc.yaml               # legacy storagePaths support
     ├── ingress.yaml
     ├── secrets.yaml          # rendered only when secretProvider=internal
     ├── externalsecret.yaml   # rendered only when secretProvider=externalsecret
@@ -256,21 +276,26 @@ fix survives regeneration.
 
 | Inference | Rule | Override |
 | --- | --- | --- |
-| Database → StatefulSet + PVC | The image **repository name** (last path segment, without tag/digest) is one of `postgres`, `postgresql`, `mysql`, `mariadb`, `mongo`, `mongodb`, `redis`. Sidecars such as `prometheuscommunity/postgres-exporter` are *not* treated as databases. | set/clear `storage` per service |
+| Database → StatefulSet | The image **repository name** (last path segment, without tag/digest) is one of `postgres`, `postgresql`, `mysql`, `mariadb`, `mongo`, `mongodb`, `redis`. Sidecars such as `prometheuscommunity/postgres-exporter` are *not* treated as databases. Named Compose volumes create per-pod claims; bind mounts are warned about and skipped. | set/clear `storage` per service; use named Compose volumes for persistence |
 | Secret env vars | The name, split into `_`/`-` tokens, contains `PASSWORD`, `PASS`, `SECRET`, `KEY`, `TOKEN` or `CREDENTIAL` as a token or token suffix (`PGPASSWORD` matches, `PASSIVE_MODE` does not). Names carrying `PUBLIC_KEY`, `PUBLICKEY`, `PUBKEY`, `KEYSTORE` or `TRUSTSTORE` are ignored unless another sensitive token remains, so `KEYCLOAK_PUBLIC_KEY` stays plain config while `KEYSTORE_PASS` is a Secret. | force with `--sensitive-env NAME,NAME` |
 | Traefik Ingress | `Host(...)` (v3, comma-separated and backtick-quoted hosts supported), `Host:` (v1/v2) and `Path`/`PathPrefix` rules produce one rule per host; TLS is enabled by `…routers.<name>.tls` labels (respecting `false`), a `tls` operand inside a rule, an `https` router, or a published `443`. Router-scoped labels only. | edit `ingress.rules` / `ingress.tls` |
 | Healthcheck → probes | `CMD`/`CMD-SHELL` tests containing an `http(s)://` URL become an `httpGet` probe on both liveness and readiness; `--interval/--timeout/--retries/--start_period` map to `periodSeconds`, `timeoutSeconds`, `failureThreshold` and a `startupProbe`. Any other test (e.g. `pg_isready`) becomes a **readinessProbe only**, because an exec check that reaches out to a dependency would restart the container whenever that dependency is down. | set `livenessProbe` / `readinessProbe` explicitly |
 | Ports | Short syntax (`8080:80/tcp`) and long syntax (`target`, `published`, `protocol`, `mode`) are normalized to `containerPort`/`published`/`protocol`. Host-only mappings with no `target` are skipped with a warning — publish those with `serviceType: LoadBalancer`/`NodePort` instead. | `serviceType` per service |
 | `env_file` | Parsed as plain `KEY=VALUE` (comments, `export ` prefix and surrounding quotes supported), relative to the compose file, later files winning. The inline `environment` block always wins. No shell interpolation of `${VAR}` is performed. | `env` per service |
+| Compose `networks` | Network names do not create Kubernetes network isolation and are not copied into chart values. HelmGen warns when it encounters them. | configure Kubernetes NetworkPolicies separately |
 
 Not resolved, and reported as a warning on stderr so failures are not silent:
 
 - top-level **`configs`** and **`secrets`** — mount them via `volumes`, or deliver them as ExternalSecrets
 - **`extends`** — the merged service definition is not computed; verify the result manually
 - **`build`** without `image` — a placeholder `<service>:local` is written; build and push the image, then set the real reference
+- Host **bind mounts** — not portable across Kubernetes nodes and are skipped with a warning; use a PVC-backed named volume or configure the mount in the chart
 
 Unsupported keys inside a recognized section (for example `devices`, `gpus`,
-`ulimits`) are ignored silently; open an issue if you need one mapped.
+`ulimits`) are ignored silently; open an issue if you need one mapped. A
+StatefulSet using a single legacy `storagePaths` PVC cannot have multiple
+replicas; generation fails rather than sharing that claim. Named Compose
+volumes use per-replica claims and can be used with multiple replicas.
 
 ## Development
 

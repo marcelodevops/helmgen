@@ -84,7 +84,14 @@ spec:
           readinessProbe:
             {{- toYaml $svc.readinessProbe | nindent 12 }}
           {{- end }}
-          {{- if $svc.storagePaths }}
+          {{- if $svc.storageVolumes }}
+          volumeMounts:
+            {{- range $svc.storageVolumes }}
+            - name: {{ .name }}
+              mountPath: {{ .mountPath | quote }}
+              readOnly: {{ .readOnly }}
+            {{- end }}
+          {{- else if $svc.storagePaths }}
           volumeMounts:
             {{- range $svc.storagePaths }}
             - name: data
@@ -97,6 +104,19 @@ spec:
           persistentVolumeClaim:
             claimName: {{ $.Release.Name }}-{{ $name }}-pvc
       {{- end }}
+  {{- if $svc.storageVolumes }}
+  volumeClaimTemplates:
+    {{- range $svc.storageClaims }}
+    - metadata:
+        name: {{ .name }}
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            storage: {{ .size | quote }}
+    {{- end }}
+  {{- end }}
 ---
 {{- end }}
 {{- end }}

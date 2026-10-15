@@ -1,5 +1,5 @@
 {{- range $name, $svc := .Values.services }}
-{{- if $svc.storage }}
+{{- if and $svc.storage (not $svc.storageVolumes) }}
 {{- $labels := dict "root" $ "name" $name }}
 apiVersion: v1
 kind: PersistentVolumeClaim

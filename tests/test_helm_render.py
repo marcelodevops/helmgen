@@ -93,11 +93,94 @@ def test_probe_and_labels_render(tmp_path, full_compose):
 def test_externalsecret_chart_lints_and_renders(tmp_path, full_compose):
     chart = build(tmp_path, full_compose, provider="externalsecret")
     lint_ok(chart)
-    output = render_ok(chart)
+    output = render_ok(
+        chart,
+        "--set", "vault.server=https://vault.example.org",
+        "--set", "vault.path=apps/",
+        "--set", "vault.version=v1",
+        "--set", "vault.auth.tokenSecretRef.name=custom-vault-token",
+        "--set", "vault.auth.tokenSecretRef.key=api-token",
+    )
     kinds = [d["kind"] for d in yaml.safe_load_all(output) if d]
     assert "ExternalSecret" in kinds
     assert "SecretStore" in kinds  # no reuseStore set
     assert "Secret" not in kinds  # internal secrets suppressed
+    store = next(d for d in yaml.safe_load_all(output) if d and d["kind"] == "SecretStore")
+    vault = store["spec"]["provider"]["vault"]
+    assert vault["server"] == "https://vault.example.org"
+    assert vault["path"] == "apps/"
+    assert vault["version"] == "v1"
+    assert vault["auth"]["tokenSecretRef"] == {"name": "custom-vault-token", "key": "api-token"}
+
+
+def test_named_volumes_render_per_replica_claim_templates(tmp_path):
+    compose = tmp_path / "docker-compose.yml"
+    compose.write_text(
+        """
+services:
+  app:
+    image: nginx:alpine
+    replicas: 3
+    volumes:
+      - content:/usr/share/nginx/html
+      - config:/etc/nginx/conf.d:ro
+"""
+    )
+    chart = tmp_path / "chart"
+    generate_helm_chart(
+        compose_path=compose,
+        output_dir=chart,
+        secret_provider="internal",
+        store_scope="namespace",
+        reuse_store=None,
+    )
+    lint_ok(chart)
+    output = render_ok(chart)
+    stateful = next(d for d in yaml.safe_load_all(output) if d and d["kind"] == "StatefulSet")
+    assert stateful["spec"]["replicas"] == 3
+    claims = stateful["spec"]["volumeClaimTemplates"]
+    assert [claim["metadata"]["name"] for claim in claims] == [
+        "volume-content",
+        "volume-config",
+    ]
+    mounts = stateful["spec"]["template"]["spec"]["containers"][0]["volumeMounts"]
+    assert [(mount["name"], mount["mountPath"], mount["readOnly"]) for mount in mounts] == [
+        ("volume-content", "/usr/share/nginx/html", False),
+        ("volume-config", "/etc/nginx/conf.d", True),
+    ]
+
+
+def test_ingress_renders_all_paths_for_each_host(tmp_path):
+    compose = tmp_path / "docker-compose.yml"
+    compose.write_text(
+        """
+services:
+  app:
+    image: nginx:alpine
+    ports: ["80"]
+    labels:
+      traefik.http.routers.app.rule: "Host(`app.example.com`) && (PathPrefix(`/api`) || Path(`/health`))"
+"""
+    )
+    chart = tmp_path / "chart"
+    generate_helm_chart(
+        compose_path=compose,
+        output_dir=chart,
+        secret_provider="internal",
+        store_scope="namespace",
+        reuse_store=None,
+    )
+    output = render_ok(chart)
+    ingress = next(d for d in yaml.safe_load_all(output) if d and d["kind"] == "Ingress")
+    rendered_paths = [
+        (rule["host"], path["path"])
+        for rule in ingress["spec"]["rules"]
+        for path in rule["http"]["paths"]
+    ]
+    assert rendered_paths == [
+        ("app.example.com", "/api"),
+        ("app.example.com", "/health"),
+    ]
 
 
 def _web_deployment(output):
@@ -164,4 +247,3 @@ services:
     assert container["livenessProbe"]["httpGet"]["path"] == "/health/live"
     assert container["readinessProbe"]["httpGet"]["path"] == "/health/ready"
     assert container["resources"]["limits"]["memory"] == "2Gi"
-
