@@ -30,7 +30,7 @@ repository = "https://github.com/marcelodevops/helmgen"
 issues = "https://github.com/marcelodevops/helmgen/issues"
 
 [project.scripts]
-helmgen = "helmgen.generator:main"
+helmgen = "helmgen.cli:main"
 
 [tool.setuptools]
 include-package-data = true

@@ -312,7 +312,17 @@ ruff check .
 pytest --cov=helmgen
 ```
 
-The templates in `helmgen/helm_templates/` are plain Helm templates (copied verbatim into the generated chart); all chart logic driven by `values.yaml` lives in `helmgen/generator.py`.
+The templates in `helmgen/helm_templates/` are plain Helm templates (copied verbatim into the generated chart); everything driven by `values.yaml` lives in these modules:
+
+| Module | Responsibility |
+| --- | --- |
+| `helmgen/cli.py` | Argument parsing and the `helmgen` console entry point |
+| `helmgen/chart.py` | Reads a compose document, writes `Chart.yaml`, `values.yaml` and the templates |
+| `helmgen/compose.py` | Compose parsing only — ports, labels, volumes, env files, depends_on |
+| `helmgen/flavors.py` | Spring Boot / Payara flavor detection and presets |
+| `helmgen/heuristics/` | Name-pattern guesses: `images`, `secrets`, `healthcheck` |
+| `helmgen/ingress/` | Traefik rule parsing (`traefik.py`) and Ingress detection (`detect.py`) |
+| `helmgen/presets.py` | Static data: database repos, resources, flavor maps, values doc |
 
 ## Dependencies
 

@@ -6,7 +6,7 @@ import subprocess
 import pytest
 import yaml
 
-from helmgen.generator import generate_helm_chart
+from helmgen.chart import generate_helm_chart
 
 pytestmark = pytest.mark.skipif(
     shutil.which("helm") is None, reason="helm binary not available"
